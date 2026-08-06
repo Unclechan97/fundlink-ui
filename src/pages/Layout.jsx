@@ -63,7 +63,7 @@ export default function Layout() {
             Credit Fund Matching System
           </Typography.Text>
         </Header>
-        <Content style={{ margin: 24, minHeight: 280 }}>
+        <Content style={{ margin: 24, flex: 1, overflow: 'auto' }}>
           <Outlet />
         </Content>
       </AntLayout>
