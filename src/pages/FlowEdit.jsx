@@ -1,10 +1,27 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Input, Select, Typography, message, Card, Row, Col, Form, Spin } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import ReactFlow, { Controls, Background, useNodesState, useEdgesState, addEdge } from 'reactflow';
+import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { createFlow, updateFlow, getFlows } from '../api';
+
+// ── 自定义节点组件 ──
+function DefaultNode({ data }) {
+  return (
+    <div style={{ padding: '10px 16px', borderRadius: 8, border: '2px solid #4f46e5', background: '#fff', fontSize: 13, fontWeight: 500, minWidth: 100, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,.08)' }}>
+      <Handle type="target" position={Position.Top} style={{ background: '#999' }} />
+      {data.label}
+      <Handle type="source" position={Position.Bottom} style={{ background: '#999' }} />
+    </div>
+  );
+}
+
+// 所有类型用同一个组件（简化），仅区分颜色
+const NODE_TYPES = useMemo(() => ({
+  START: DefaultNode, END: DefaultNode, CONDITION: DefaultNode,
+  DATA_COLLECT: DefaultNode, TEMPLATE_RENDER: DefaultNode, SEND_TO_FUND: DefaultNode,
+}), []);
 
 const PALETTE = {
   START: { color: '#22c55e', bg: '#f0fdf4', label: 'Start' },
@@ -22,8 +39,8 @@ export default function FlowEdit() {
   const isNew = !id;
   const nav = useNavigate();
   const [form] = Form.useForm();
-  const [nodes, setNodes] = useNodesState([]);
-  const [edges, setEdges] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selNode, setSelNode] = useState(null);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
@@ -38,10 +55,9 @@ export default function FlowEdit() {
             const g = JSON.parse(f.graphData);
             if (g.nodes?.length) {
               _id = Math.max(...g.nodes.map((n) => parseInt(String(n.id).replace(/\D/g, '')) || 0));
-              // Ensure each node has a position
               const fixed = g.nodes.map((n, i) => ({
                 ...n,
-                position: n.position || { x: 100 + (i % 3) * 250, y: 100 + Math.floor(i / 3) * 150 },
+                position: n.position || { x: 100 + (i % 3) * 260, y: 100 + Math.floor(i / 3) * 150 },
               }));
               setNodes(fixed);
             }
@@ -75,7 +91,7 @@ export default function FlowEdit() {
     if (!type || !PALETTE[type]) return;
     setNodes((nds) => [
       ...nds,
-      { id: `n${++_id}`, type, position: { x: Math.random() * 300 + 100, y: Math.random() * 200 + 100 }, data: { label: PALETTE[type].label, config: {} } },
+      { id: `n${++_id}`, type: type, position: { x: Math.random() * 300 + 100, y: Math.random() * 200 + 100 }, data: { label: PALETTE[type].label, config: {} } },
     ]);
   }, []);
 
@@ -133,12 +149,18 @@ export default function FlowEdit() {
           </Card>
         </Col>
         <Col span={17}>
-          <Card size="small" style={{ borderRadius: 12, height: '100%' }} styles={{ body: { height: '100%', padding: 0 } }}>
-            <ReactFlow nodes={nodes} edges={edges}
-              onNodesChange={(e) => setNodes(e)}
-              onEdgesChange={(e) => setEdges(e)}
-              onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick}
-              onDrop={onDrop} onDragOver={onDragOver}
+          <Card size="small" style={{ borderRadius: 12, height: '100%' }}
+            styles={{ body: { height: '100%', padding: 0 } }}>
+            <ReactFlow
+              nodes={nodes} edges={edges}
+              nodeTypes={NODE_TYPES}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              onEdgeClick={onEdgeClick}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
               fitView
             >
               <Controls /><Background gap={16} color="#f5f5f5" />
