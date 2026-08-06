@@ -38,7 +38,12 @@ export default function FlowEdit() {
             const g = JSON.parse(f.graphData);
             if (g.nodes?.length) {
               _id = Math.max(...g.nodes.map((n) => parseInt(String(n.id).replace(/\D/g, '')) || 0));
-              setNodes(g.nodes);
+              // Ensure each node has a position
+              const fixed = g.nodes.map((n, i) => ({
+                ...n,
+                position: n.position || { x: 100 + (i % 3) * 250, y: 100 + Math.floor(i / 3) * 150 },
+              }));
+              setNodes(fixed);
             }
             if (g.edges?.length) setEdges(g.edges);
           } catch { /* */ }
@@ -128,10 +133,10 @@ export default function FlowEdit() {
           </Card>
         </Col>
         <Col span={17}>
-          <Card size="small" style={{ borderRadius: 12, height: '100%' }} bodyStyle={{ height: '100%', padding: 0 }}>
+          <Card size="small" style={{ borderRadius: 12, height: '100%' }} styles={{ body: { height: '100%', padding: 0 } }}>
             <ReactFlow nodes={nodes} edges={edges}
-              onNodesChange={useCallback((e) => setNodes(e), [])}
-              onEdgesChange={useCallback((e) => setEdges(e), [])}
+              onNodesChange={(e) => setNodes(e)}
+              onEdgesChange={(e) => setEdges(e)}
               onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick}
               onDrop={onDrop} onDragOver={onDragOver}
               fitView
