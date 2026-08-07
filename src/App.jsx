@@ -9,6 +9,9 @@ import FlowEdit from './pages/FlowEdit';
 import MockRules from './pages/MockRules';
 import EnumMappings from './pages/EnumMappings';
 import Logs from './pages/Logs';
+import Copilot from './pages/ai/Copilot';
+import TaskCenter from './pages/ai/TaskCenter';
+import AgentTrace from './pages/ai/AgentTrace';
 
 export default function App() {
   return (
@@ -25,6 +28,9 @@ export default function App() {
         <Route path="mock" element={<MockRules />} />
         <Route path="enums" element={<EnumMappings />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="ai/copilot" element={<Copilot />} />
+        <Route path="ai/tasks" element={<TaskCenter />} />
+        <Route path="ai/trace" element={<AgentTrace />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Route>
     </Routes>

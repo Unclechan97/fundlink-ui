@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      '/api/ai': 'http://localhost:8081',
       '/api': 'http://localhost:8080',
     },
   },

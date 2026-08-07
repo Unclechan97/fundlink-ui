@@ -4,7 +4,7 @@ import { Layout as AntLayout, Menu, Typography } from 'antd';
 import {
   DashboardOutlined, BankOutlined, FileTextOutlined,
   ApartmentOutlined, ExperimentOutlined, OrderedListOutlined,
-  FileSearchOutlined,
+  FileSearchOutlined, RobotOutlined,
 } from '@ant-design/icons';
 
 const { Sider, Content, Header } = AntLayout;
@@ -17,6 +17,7 @@ const menuItems = [
   { key: '/mock', icon: <ExperimentOutlined />, label: 'Mock Rules' },
   { key: '/enums', icon: <OrderedListOutlined />, label: 'Enum Mapping' },
   { key: '/logs', icon: <FileSearchOutlined />, label: 'Logs' },
+  { key: '/ai/copilot', icon: <RobotOutlined />, label: 'AI Copilot' },
 ];
 
 export default function Layout() {
@@ -24,7 +25,8 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const selectedKey = '/' + location.pathname.split('/')[1];
+  const pathParts = location.pathname.split('/');
+  const selectedKey = pathParts[1] === 'ai' ? '/ai/copilot' : '/' + pathParts[1];
 
   return (
     <AntLayout style={{ minHeight: '100vh' }}>

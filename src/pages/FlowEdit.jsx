@@ -101,6 +101,17 @@ export default function FlowEdit() {
       n.id === selNode.id ? { ...n, data: { ...n.data, config: { ...n.data.config, [k]: v } } } : n));
   };
 
+  const delNode = () => {
+    if (!selNode) return;
+    setNodes((nds) => nds.filter((n) => n.id !== selNode.id));
+    setEdges((eds) => eds.filter((e) => e.source !== selNode.id && e.target !== selNode.id));
+    setSelNode(null);
+  };
+
+  const delEdge = (edgeId) => {
+    setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+  };
+
   const onSave = async () => {
     const vals = await form.validateFields();
     setLoading(true);
@@ -157,6 +168,7 @@ export default function FlowEdit() {
               onConnect={onConnect}
               onNodeClick={onNodeClick} onEdgeClick={onEdgeClick}
               onDrop={onDrop} onDragOver={onDragOver}
+              deleteKeyCode={["Backspace","Delete"]}
               fitView
             >
               <Controls /><Background gap={16} color="#f5f5f5" />
@@ -167,7 +179,10 @@ export default function FlowEdit() {
           <Card title="Config" size="small" style={{ borderRadius: 12 }}>
             {selNode ? (
               <div>
-                <Typography.Text strong style={{ color: PALETTE[selNode.type]?.color, fontSize: 13 }}>{PALETTE[selNode.type]?.label}</Typography.Text>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography.Text strong style={{ color: PALETTE[selNode.type]?.color, fontSize: 13 }}>{PALETTE[selNode.type]?.label}</Typography.Text>
+                  <Button size="small" danger onClick={delNode}>Delete</Button>
+                </div>
                 {selNode.type === 'DATA_COLLECT' && <>
                   <Input size="small" placeholder="Source code" style={{ marginTop: 6 }} value={selNode.data.config?.dataSourceCode || ''} onChange={(e) => updCfg('dataSourceCode', e.target.value)} />
                   <Input size="small" placeholder="Output key" style={{ marginTop: 6 }} value={selNode.data.config?.outputKey || ''} onChange={(e) => updCfg('outputKey', e.target.value)} />
@@ -186,7 +201,7 @@ export default function FlowEdit() {
                 </>}
               </div>
             ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>Click a node to edit</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>Click node to edit | Del key to remove</Typography.Text>
             )}
           </Card>
         </Col>

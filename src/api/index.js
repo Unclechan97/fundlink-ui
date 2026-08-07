@@ -89,3 +89,28 @@ export const getFlowInstances = (page = 1, size = 10) =>
 // ---- ApiLog ----
 export const getApiLogs = (page = 1, size = 10) =>
   api.get('/api/admin/api-logs', { params: { page, size } });
+
+// ============================================================
+// AI Copilot API (port 8081)
+// ============================================================
+const aiApi = axios.create({
+  baseURL: 'http://localhost:3000',  // Vite proxy → /api/ai → 8081
+  timeout: 60000,
+});
+
+aiApi.interceptors.response.use(
+  (res) => res.data,
+  (err) => Promise.reject(err)
+);
+
+/** 上传接口文档 → AI 解析生成配置 */
+export const analyzeDocument = (documentText, providerCode) =>
+  aiApi.post('/api/ai/analyze', { documentText, providerCode });
+
+/** 获取 AI 字段映射建议 */
+export const suggestMappings = (documentText, providerCode) =>
+  aiApi.post('/api/ai/suggest-mappings', { documentText, providerCode });
+
+/** 审核通过后写入 FundLink */
+export const applyConfig = (result, providerCode, flowType) =>
+  aiApi.post('/api/ai/apply', { result, providerCode, flowType });
