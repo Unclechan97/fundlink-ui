@@ -287,13 +287,6 @@ export default function Copilot() {
             </Card>
           )}
 
-          {/* ── FreeMarker 参考（AI 骨架，写入时后端用 mappings 重建）─── */}
-          {result.freeMarkerTemplate && (
-            <Card title="FreeMarker 参考" style={{ marginBottom: 16 }}>
-              <pre style={{ fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0, color: '#888' }}>{result.freeMarkerTemplate}</pre>
-            </Card>
-          )}
-
           {/* ── 写入按钮 ── */}
           <Tooltip title={!canWrite ? '请先采纳所有字段映射和流程' : '写入 FundLink'}>
             <Button type="primary" size="large" disabled={!canWrite} loading={applying}
