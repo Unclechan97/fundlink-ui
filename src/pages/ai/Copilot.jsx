@@ -33,10 +33,7 @@ export default function Copilot() {
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState([]);
   const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState([]);
   const [flowAccepted, setFlowAccepted] = useState(false);
-  const [selFlowEl, setSelFlowEl] = useState(null); // selected node or edge
-
-  // ── FreeMarker ──
-  const [freeMarker, setFreeMarker] = useState('');
+  const [selFlowEl, setSelFlowEl] = useState(null);
 
   // ── React Flow nodeTypes ──
   const nodeTypes = useMemo(() => {
@@ -66,7 +63,6 @@ export default function Copilot() {
       // 初始化映射表
       const ms = (data.fieldMappings || []).map(m => ({ ...m, accepted: false }));
       setMappings(ms);
-      setFreeMarker(data.freeMarkerTemplate || '');
 
       // 初始化流程图
       if (data.flowDsl?.nodes) {
@@ -96,28 +92,23 @@ export default function Copilot() {
     setMappings(prev => prev.map(m => ({ ...m, accepted: true })));
   };
 
+  const addRow = () => {
+    setMappings(prev => [...prev, { fundField: '', sourcePath: '', transform: '', confidence: 1, accepted: false }]);
+  };
+
+  const deleteRow = (idx) => {
+    setMappings(prev => prev.filter((_, i) => i !== idx));
+  };
+
   const startEdit = (idx, field) => setEditingCell({ index: idx, field });
   const commitEdit = (idx, field, value) => {
-    setMappings(prev => {
-      const ms = [...prev];
-      const oldVal = ms[idx][field];
-      ms[idx] = { ...ms[idx], [field]: value };
-      setMappings(ms); // 需要立即生效
-
-      // fundField 改动 → 自动更新 FreeMarker
-      if (field === 'fundField' && oldVal !== value) {
-        setFreeMarker(prevFm => replaceVar(prevFm, oldVal, value));
-      }
-      return ms;
-    });
+    const prev = [...mappings];
+    if (!value || value === prev[idx][field]) { setEditingCell(null); return; }
+    prev[idx] = { ...prev[idx], [field]: value };
+    setMappings(prev);
     setEditingCell(null);
   };
 
-  const replaceVar = (template, oldField, newField) => {
-    if (!template || !oldField || !newField) return template;
-    return template.replaceAll('${' + oldField + '}', '${' + newField + '}')
-                   .replaceAll('${' + oldField + '?', '${' + newField + '?'); // FreeMarker built-ins
-  };
 
   const allMappingsAccepted = mappings.length > 0 && mappings.every(m => m.accepted);
   const acceptedCount = mappings.filter(m => m.accepted).length;
@@ -155,7 +146,6 @@ export default function Copilot() {
       const writeResult = {
         ...result,
         fieldMappings: mappings.map(({ accepted, ...m }) => m),
-        freeMarkerTemplate: freeMarker,
         flowDsl: result.flowDsl ? { ...result.flowDsl, nodes: flowNodes, edges: flowEdges } : null,
       };
       const res = await applyConfig(writeResult, providerCode, 'LOAN');
@@ -185,13 +175,16 @@ export default function Copilot() {
       render: (v, _, idx) => editableCell(idx, 'transform', v) },
     { title: '置信度', dataIndex: 'confidence', key: 'confidence', width: 70,
       render: v => <Tag color={v > 0.8 ? 'green' : 'orange'}>{Math.round(v * 100)}%</Tag> },
-    { title: '采纳', key: 'accept', width: 80,
+    { title: '操作', key: 'actions', width: 140,
       render: (_, r, idx) => (
-        <Button size="small" type={r.accepted ? 'primary' : 'default'}
-          icon={r.accepted ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-          onClick={() => toggleAccept(idx)}>
-          {r.accepted ? '已采纳' : '待确认'}
-        </Button>
+        <Space size={4}>
+          <Button size="small" type={r.accepted ? 'primary' : 'default'}
+            icon={r.accepted ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+            onClick={() => toggleAccept(idx)}>
+            {r.accepted ? '已采纳' : '待确认'}
+          </Button>
+          <Button size="small" danger onClick={() => deleteRow(idx)}>删除</Button>
+        </Space>
       )},
   ];
 
@@ -217,7 +210,7 @@ export default function Copilot() {
           {/* ── 字段映射 ── */}
           <Card title={<span>字段映射建议 <Tag>{acceptedCount}/{mappings.length} 已采纳</Tag></span>}
             style={{ marginBottom: 16 }}
-            extra={<Button size="small" type="dashed" onClick={acceptAll}>一键采纳</Button>}>
+            extra={<Space><Button size="small" onClick={addRow}>添加行</Button><Button size="small" type="dashed" onClick={acceptAll}>一键采纳</Button></Space>}>
             <Table dataSource={mappings} columns={fieldMappingColumns}
               rowKey={(_, idx) => idx} pagination={false} size="small"
               components={{ body: { row: (props) => <tr {...props} /> } }} />
@@ -294,14 +287,10 @@ export default function Copilot() {
             </Card>
           )}
 
-          {/* ── FreeMarker 模板 ── */}
-          {freeMarker && (
-            <Card title="FreeMarker 模板" style={{ marginBottom: 16 }}>
-              <Collapse items={[{
-                key: 'ftl',
-                label: `${freeMarker.length} 字符`,
-                children: <pre style={{ fontSize: 12, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{freeMarker}</pre>,
-              }]} />
+          {/* ── FreeMarker 参考（AI 骨架，写入时后端用 mappings 重建）─── */}
+          {result.freeMarkerTemplate && (
+            <Card title="FreeMarker 参考" style={{ marginBottom: 16 }}>
+              <pre style={{ fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0, color: '#888' }}>{result.freeMarkerTemplate}</pre>
             </Card>
           )}
 
