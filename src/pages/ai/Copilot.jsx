@@ -1,9 +1,11 @@
-import { useState, useCallback, useMemo } from 'react';
-import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Descriptions, Collapse, Tooltip } from 'antd';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Descriptions, Collapse, Tooltip, Segmented, Select } from 'antd';
 import { RobotOutlined, SendOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons';
 import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { analyzeDocument, applyConfig } from '../../api';
+import AutoLoopPanel from './AutoLoopPanel';
+import useSessionState from '../../hooks/useSessionState';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -19,11 +21,13 @@ const PALETTE = {
 };
 
 export default function Copilot() {
-  const [docText, setDocText] = useState('');
-  const [providerCode, setProviderCode] = useState('');
+  const [mode, setMode] = useSessionState('copilot:mode', 'manual');
+  const [docText, setDocText] = useSessionState('copilot:docText', '');
+  const [providerCode, setProviderCode] = useSessionState('copilot:providerCode', '');
+  const [flowType, setFlowType] = useSessionState('copilot:flowType', 'LOAN');
+  const [result, setResult] = useSessionState('copilot:result', null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [result, setResult] = useState(null);
 
   // ── 字段映射状态 ──
   const [mappings, setMappings] = useState([]);
@@ -50,6 +54,35 @@ export default function Copilot() {
     return types;
   }, []);
 
+  // ── 从 result 初始化映射表 + 流程图 ──
+  const initFromResult = useCallback((data) => {
+    const ms = (data.fieldMappings || []).map(m => ({ ...m, accepted: false }));
+    setMappings(ms);
+
+    if (data.flowDsl?.nodes) {
+      const ns = data.flowDsl.nodes.map((n, i) => ({
+        ...n,
+        position: { x: 50 + (i % 4) * 220, y: 50 + Math.floor(i / 4) * 140 },
+      }));
+      setFlowNodes(ns);
+      setFlowEdges(data.flowDsl.edges || []);
+    } else {
+      setFlowNodes([]);
+      setFlowEdges([]);
+    }
+    setFlowAccepted(false);
+    setSelFlowEl(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 页面切回时恢复持久化的 result ──
+  const hasRestored = useRef(false);
+  useEffect(() => {
+    if (!hasRestored.current && result) {
+      hasRestored.current = true;
+      initFromResult(result);
+    }
+  }, []); // 仅 mount 时执行一次
+
   // ── AI 解析 ──
   const handleAnalyze = async () => {
     if (!docText.trim()) { message.warning('请输入接口文档内容'); return; }
@@ -59,22 +92,7 @@ export default function Copilot() {
       const res = await analyzeDocument(docText, providerCode.trim());
       const data = res.data;
       setResult(data);
-
-      // 初始化映射表
-      const ms = (data.fieldMappings || []).map(m => ({ ...m, accepted: false }));
-      setMappings(ms);
-
-      // 初始化流程图
-      if (data.flowDsl?.nodes) {
-        const ns = data.flowDsl.nodes.map((n, i) => ({
-          ...n,
-          position: { x: 50 + (i % 4) * 220, y: 50 + Math.floor(i / 4) * 140 },
-        }));
-        setFlowNodes(ns);
-        setFlowEdges(data.flowDsl.edges || []);
-      }
-      setFlowAccepted(false);
-      setSelFlowEl(null);
+      initFromResult(data);
       message.success('AI 解析完成');
     } catch (e) {
       message.error('AI 服务暂不可用: ' + (e.message || ''));
@@ -102,10 +120,13 @@ export default function Copilot() {
 
   const startEdit = (idx, field) => setEditingCell({ index: idx, field });
   const commitEdit = (idx, field, value) => {
-    const prev = [...mappings];
-    if (!value || value === prev[idx][field]) { setEditingCell(null); return; }
-    prev[idx] = { ...prev[idx], [field]: value };
-    setMappings(prev);
+    if (!value) { setEditingCell(null); return; }
+    setMappings(prev => {
+      if (value === prev[idx][field]) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
     setEditingCell(null);
   };
 
@@ -115,16 +136,16 @@ export default function Copilot() {
 
   // ── 流程图操作 ──
   const onConnect = useCallback((params) => setFlowEdges((eds) => addEdge(params, eds)), []);
-  const onNodeClick = useCallback((_, node) => setSelFlowEl({ type: 'node', ...node }), []);
-  const onEdgeClick = useCallback((_, edge) => setSelFlowEl({ type: 'edge', ...edge }), []);
+  const onNodeClick = useCallback((_, node) => setSelFlowEl({ kind: 'node', ...node }), []);
+  const onEdgeClick = useCallback((_, edge) => setSelFlowEl({ kind: 'edge', ...edge }), []);
 
   const updateFlowEl = (key, val) => {
     if (!selFlowEl) return;
-    if (selFlowEl.type === 'node') {
+    if (selFlowEl.kind === 'node') {
       setFlowNodes(nds => nds.map(n => n.id === selFlowEl.id
-        ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: val } } } : n));
-      setSelFlowEl(prev => ({ ...prev, data: { ...prev.data, config: { ...prev.data.config, [key]: val } } }));
-    } else if (selFlowEl.type === 'edge') {
+        ? { ...n, data: { ...n.data, config: { ...(n.data?.config || {}), [key]: val } } } : n));
+      setSelFlowEl(prev => ({ ...prev, data: { ...prev.data, config: { ...(prev.data?.config || {}), [key]: val } } }));
+    } else if (selFlowEl.kind === 'edge') {
       const isCond = key === 'conditionExpr';
       setFlowEdges(eds => eds.map(e => e.id === selFlowEl.id
         ? { ...e, [key]: val, ...(isCond && val ? { label: e.label || '条件' } : {}) } : e));
@@ -193,109 +214,151 @@ export default function Copilot() {
     <div style={{ maxWidth: 1200, margin: '0 auto' }}>
       <Title level={3}><RobotOutlined /> AI Copilot</Title>
 
+      <Space style={{ marginBottom: 16 }}>
+        <Segmented
+          value={mode}
+          onChange={setMode}
+          options={[
+            { label: '✋ 手动', value: 'manual' },
+            { label: '🤖 自动', value: 'auto' },
+          ]}
+        />
+        <Select
+          value={flowType}
+          onChange={setFlowType}
+          style={{ width: 120 }}
+          options={[
+            { label: '放款 (LOAN)', value: 'LOAN' },
+            { label: '授信 (CREDIT)', value: 'CREDIT' },
+            { label: '还款 (REPAY)', value: 'REPAY' },
+          ]}
+        />
+      </Space>
+
       <Card style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Input placeholder="资金方编码 (如 CMB)" value={providerCode}
             onChange={e => setProviderCode(e.target.value)} style={{ width: 200 }} />
           <TextArea placeholder="粘贴资金方接口文档..." rows={6}
             value={docText} onChange={e => setDocText(e.target.value)} />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>AI 解析</Button>
+          {mode === 'manual' && (
+            <Button type="primary" icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>AI 解析</Button>
+          )}
         </Space>
       </Card>
 
-      {loading && <Spin tip="AI 正在分析..." style={{ display: 'block', margin: '40px auto' }} />}
-
-      {result && !loading && (
+      {/* ── 手动模式 ── */}
+      {mode === 'manual' && (
         <>
-          {/* ── 字段映射 ── */}
-          <Card title={<span>字段映射建议 <Tag>{acceptedCount}/{mappings.length} 已采纳</Tag></span>}
-            style={{ marginBottom: 16 }}
-            extra={<Space><Button size="small" onClick={addRow}>添加行</Button><Button size="small" type="dashed" onClick={acceptAll}>一键采纳</Button></Space>}>
-            <Table dataSource={mappings} columns={fieldMappingColumns}
-              rowKey={(_, idx) => idx} pagination={false} size="small"
-              components={{ body: { row: (props) => <tr {...props} /> } }} />
-          </Card>
+          {loading && <Spin tip="AI 正在分析..." style={{ display: 'block', margin: '40px auto' }} />}
 
-          {/* ── 流程图 ── */}
-          {flowNodes.length > 0 && (
-            <Card title={<span>流程 DSL <Tag color={flowAccepted ? 'green' : 'orange'}>{flowAccepted ? '已采纳' : '待确认'}</Tag></span>}
-              style={{ marginBottom: 16 }}
-              extra={<Button size="small" type="dashed" onClick={() => { setFlowAccepted(true); message.success('流程已采纳'); }}>采纳流程</Button>}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <div style={{ flex: 1, height: 350, border: '1px solid #f0f0f0', borderRadius: 8 }}>
-                  <ReactFlow nodes={flowNodes} edges={flowEdges}
-                    nodeTypes={nodeTypes}
-                    onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-                    onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick}
-                    deleteKeyCode={["Backspace","Delete"]} fitView>
-                    <Controls /><Background gap={16} color="#f5f5f5" />
-                  </ReactFlow>
-                </div>
-                {/* 右侧配置面板 */}
-                <div style={{ width: 220, padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fafafa' }}>
-                  {selFlowEl ? (
-                    <div>
-                      <Text strong style={{ fontSize: 12 }}>
-                        {selFlowEl.type === 'node' ? `节点: ${selFlowEl.data?.label || selFlowEl.id}` : `连线: ${selFlowEl.id}`}
-                      </Text>
-                      <div style={{ marginTop: 8 }}>
-                        {selFlowEl.type === 'node' && selFlowEl.type === 'DATA_COLLECT' && <>
-                          <Input size="small" placeholder="dataSourceCode" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.dataSourceCode || ''}
-                            onChange={e => updateFlowEl('dataSourceCode', e.target.value)} />
-                          <Input size="small" placeholder="outputKey" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.outputKey || ''}
-                            onChange={e => updateFlowEl('outputKey', e.target.value)} />
-                        </>}
-                        {selFlowEl.type === 'node' && selFlowEl.type === 'TEMPLATE_RENDER' && <>
-                          <Input size="small" placeholder="templateCode" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.templateCode || ''}
-                            onChange={e => updateFlowEl('templateCode', e.target.value)} />
-                          <Input size="small" placeholder="outputKey" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.outputKey || ''}
-                            onChange={e => updateFlowEl('outputKey', e.target.value)} />
-                        </>}
-                        {selFlowEl.type === 'node' && selFlowEl.type === 'SEND_TO_FUND' && <>
-                          <Input size="small" placeholder="URL" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.url || ''}
-                            onChange={e => updateFlowEl('url', e.target.value)} />
-                          <Input size="small" placeholder="requestKey" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.requestKey || ''}
-                            onChange={e => updateFlowEl('requestKey', e.target.value)} />
-                          <Input size="small" placeholder="responseKey" style={{ marginTop: 4 }}
-                            value={selFlowEl.data?.config?.responseKey || ''}
-                            onChange={e => updateFlowEl('responseKey', e.target.value)} />
-                        </>}
-                        {selFlowEl.type === 'edge' && <>
-                          <Input size="small" placeholder="Label" style={{ marginTop: 4 }}
-                            value={selFlowEl.label || ''}
-                            onChange={e => updateFlowEl('label', e.target.value)} />
-                          <TextArea size="small" rows={2} placeholder="conditionExpr (SpEL)" style={{ marginTop: 4 }}
-                            value={selFlowEl.conditionExpr || ''}
-                            onChange={e => updateFlowEl('conditionExpr', e.target.value)} />
-                        </>}
-                        {selFlowEl.type === 'node' && !['DATA_COLLECT', 'TEMPLATE_RENDER', 'SEND_TO_FUND'].includes(selFlowEl.type) && (
-                          <Text type="secondary" style={{ fontSize: 12 }}>此节点无可配置项</Text>
-                        )}
-                      </div>
+          {result && !loading && (
+            <>
+              {/* ── 字段映射 ── */}
+              <Card title={<span>字段映射建议 <Tag>{acceptedCount}/{mappings.length} 已采纳</Tag></span>}
+                style={{ marginBottom: 16 }}
+                extra={<Space><Button size="small" onClick={addRow}>添加行</Button><Button size="small" type="dashed" onClick={acceptAll}>一键采纳</Button></Space>}>
+                <Table dataSource={mappings} columns={fieldMappingColumns}
+                  rowKey={(_, idx) => idx} pagination={false} size="small"
+                  components={{ body: { row: (props) => <tr {...props} /> } }} />
+              </Card>
+
+              {/* ── 流程图 ── */}
+              {flowNodes.length > 0 && (
+                <Card title={<span>流程 DSL <Tag color={flowAccepted ? 'green' : 'orange'}>{flowAccepted ? '已采纳' : '待确认'}</Tag></span>}
+                  style={{ marginBottom: 16 }}
+                  extra={<Button size="small" type="dashed" onClick={() => { setFlowAccepted(true); message.success('流程已采纳'); }}>采纳流程</Button>}>
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div style={{ flex: 1, height: 350, border: '1px solid #f0f0f0', borderRadius: 8 }}>
+                      <ReactFlow nodes={flowNodes} edges={flowEdges}
+                        nodeTypes={nodeTypes}
+                        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                        onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick}
+                        deleteKeyCode={["Backspace","Delete"]} fitView>
+                        <Controls /><Background gap={16} color="#f5f5f5" />
+                      </ReactFlow>
                     </div>
-                  ) : (
-                    <Text type="secondary" style={{ fontSize: 12 }}>点击节点或连线查看配置</Text>
-                  )}
-                </div>
-              </div>
-            </Card>
-          )}
+                    <div style={{ width: 220, padding: 12, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fafafa' }}>
+                      {selFlowEl ? (
+                        <div>
+                          <Text strong style={{ fontSize: 12 }}>
+                            {selFlowEl.kind === 'node' ? `节点: ${selFlowEl.data?.label || selFlowEl.id}` : `连线: ${selFlowEl.id}`}
+                          </Text>
+                          <div style={{ marginTop: 8 }}>
+                            {selFlowEl.kind === 'node' && selFlowEl.type === 'DATA_COLLECT' && <>
+                              <Input size="small" placeholder="dataSourceCode" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.dataSourceCode || ''}
+                                onChange={e => updateFlowEl('dataSourceCode', e.target.value)} />
+                              <Input size="small" placeholder="outputKey" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.outputKey || ''}
+                                onChange={e => updateFlowEl('outputKey', e.target.value)} />
+                            </>}
+                            {selFlowEl.kind === 'node' && selFlowEl.type === 'TEMPLATE_RENDER' && <>
+                              <Input size="small" placeholder="templateCode" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.templateCode || ''}
+                                onChange={e => updateFlowEl('templateCode', e.target.value)} />
+                              <Input size="small" placeholder="outputKey" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.outputKey || ''}
+                                onChange={e => updateFlowEl('outputKey', e.target.value)} />
+                            </>}
+                            {selFlowEl.kind === 'node' && selFlowEl.type === 'SEND_TO_FUND' && <>
+                              <Input size="small" placeholder="URL" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.url || ''}
+                                onChange={e => updateFlowEl('url', e.target.value)} />
+                              <Input size="small" placeholder="requestKey" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.requestKey || ''}
+                                onChange={e => updateFlowEl('requestKey', e.target.value)} />
+                              <Input size="small" placeholder="responseKey" style={{ marginTop: 4 }}
+                                value={selFlowEl.data?.config?.responseKey || ''}
+                                onChange={e => updateFlowEl('responseKey', e.target.value)} />
+                            </>}
+                            {selFlowEl.kind === 'edge' && <>
+                              <Input size="small" placeholder="Label" style={{ marginTop: 4 }}
+                                value={selFlowEl.label || ''}
+                                onChange={e => updateFlowEl('label', e.target.value)} />
+                              <TextArea size="small" rows={2} placeholder="conditionExpr (SpEL)" style={{ marginTop: 4 }}
+                                value={selFlowEl.conditionExpr || ''}
+                                onChange={e => updateFlowEl('conditionExpr', e.target.value)} />
+                            </>}
+                            {selFlowEl.kind === 'node' && !['DATA_COLLECT', 'TEMPLATE_RENDER', 'SEND_TO_FUND'].includes(selFlowEl.type) && (
+                              <Text type="secondary" style={{ fontSize: 12 }}>此节点无可配置项</Text>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <Text type="secondary" style={{ fontSize: 12 }}>点击节点或连线查看配置</Text>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              )}
 
-          {/* ── 写入按钮 ── */}
-          <Tooltip title={!canWrite ? '请先采纳所有字段映射和流程' : '写入 FundLink'}>
-            <Button type="primary" size="large" disabled={!canWrite} loading={applying}
-              onClick={handleApply} style={{ marginTop: 8 }}
-              icon={<CheckCircleOutlined />}>
-              写入 FundLink 配置
-            </Button>
-          </Tooltip>
+              {/* ── 写入按钮 ── */}
+              <Tooltip title={!canWrite ? '请先采纳所有字段映射和流程' : '写入 FundLink'}>
+                <Button type="primary" size="large" disabled={!canWrite} loading={applying}
+                  onClick={handleApply} style={{ marginTop: 8 }}
+                  icon={<CheckCircleOutlined />}>
+                  写入 FundLink 配置
+                </Button>
+              </Tooltip>
+            </>
+          )}
         </>
+      )}
+
+      {/* ── 自动模式 ── */}
+      {mode === 'auto' && docText.trim() && providerCode.trim() && (
+        <AutoLoopPanel
+          documentText={docText}
+          providerCode={providerCode.trim()}
+          flowType={flowType}
+        />
+      )}
+
+      {mode === 'auto' && (!docText.trim() || !providerCode.trim()) && (
+        <Card style={{ marginBottom: 16 }}>
+          <Text type="secondary">请先输入资金方编码和接口文档，然后点击"开始闭环"启动自动流程。</Text>
+        </Card>
       )}
     </div>
   );

@@ -1,13 +1,19 @@
 import axios from 'axios';
 
+// 开发环境通过 Vite proxy，生产环境通过反向代理 (nginx/Caddy)
+const ADMIN_BASE = import.meta.env.VITE_ADMIN_BASE_URL || '';
+
 const api = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: ADMIN_BASE,
   timeout: 10000,
 });
 
 api.interceptors.response.use(
   (res) => res.data,
-  (err) => Promise.reject(err)
+  (err) => {
+    // 统一错误处理：后端 code != 0 透传，网络错误提示
+    return Promise.reject(err);
+  }
 );
 
 // ---- Provider ----
@@ -93,13 +99,25 @@ export const getApiLogs = (page = 1, size = 10) =>
 // ============================================================
 // AI Copilot API (port 8081)
 // ============================================================
+const AI_BASE = import.meta.env.VITE_AI_BASE_URL || '';
+
 const aiApi = axios.create({
-  baseURL: 'http://localhost:3000',  // Vite proxy → /api/ai → 8081
+  baseURL: AI_BASE,
   timeout: 60000,
 });
 
 aiApi.interceptors.response.use(
-  (res) => res.data,
+  (res) => {
+    // 检查业务层 code: ApiAiResponse.code != 0 时视为错误
+    const body = res.data;
+    if (body && typeof body.code === 'number' && body.code !== 0) {
+      const err = new Error(body.msg || 'AI 服务返回错误');
+      err.response = res;
+      err.code = body.code;
+      return Promise.reject(err);
+    }
+    return body;
+  },
   (err) => Promise.reject(err)
 );
 
@@ -114,3 +132,19 @@ export const suggestMappings = (documentText, providerCode) =>
 /** 审核通过后写入 FundLink */
 export const applyConfig = (result, providerCode, flowType) =>
   aiApi.post('/api/ai/apply', { result, providerCode, flowType });
+
+// ============================================================
+// Auto Loop API — SSE 驱动闭环
+// ============================================================
+
+/** 创建自动闭环任务，返回 {taskId, taskNo} */
+export const createLoop = (documentText, providerCode, flowType = 'LOAN') =>
+  aiApi.post('/api/ai/loop', { documentText, providerCode, flowType });
+
+/** 查询闭环任务状态 */
+export const getLoopTask = (taskId) =>
+  aiApi.get(`/api/ai/loop/${taskId}`);
+
+/** 发送人工决策: decision = RETRY | SKIP | EDIT_AND_RETRY | ABORT | PUBLISH */
+export const sendDecision = (taskId, decision, editedResult, comment) =>
+  aiApi.post(`/api/ai/loop/${taskId}/decide`, { taskId, decision, editedResult, comment });
