@@ -1,11 +1,11 @@
-import { useReducer, useEffect, useRef, useCallback } from 'react';
-import { Card, Steps, Collapse, Button, Space, Tag, Typography, Alert, message, Spin } from 'antd';
+import { useReducer, useEffect, useRef, useCallback, useState } from 'react';
+import { Card, Steps, Collapse, Button, Space, Tag, Typography, Alert, message, Spin, Modal, Table, Input } from 'antd';
 import {
   LoadingOutlined, CheckCircleFilled, CloseCircleFilled,
   PlayCircleOutlined, StopOutlined, RedoOutlined,
   ForwardOutlined, EditOutlined, ReloadOutlined,
 } from '@ant-design/icons';
-import { createLoop, getLoopTask, sendDecision } from '../../api';
+import { createLoop, getLoopTask, sendDecision, getLoopResult } from '../../api';
 
 const { Text } = Typography;
 
@@ -210,6 +210,11 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   const [state, dispatch] = useReducer(reducer, initialState);
   const esRef = useRef(null);
 
+  // ── 编辑弹窗状态 ──
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editMappings, setEditMappings] = useState([]);
+
   // ── SSE 连接 ──
   const connectSSE = useCallback((taskId) => {
     if (esRef.current) {
@@ -378,15 +383,48 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   // ── 发送决策 ──
   const handleDecision = async (decision) => {
     if (state.decisionSent || !state.taskId) return;
-    dispatch({ type: 'DECISION_SENT' });
 
+    // EDIT_AND_RETRY — 打开编辑弹窗
+    if (decision === 'EDIT_AND_RETRY') {
+      setEditLoading(true);
+      setEditOpen(true);
+      try {
+        const res = await getLoopResult(state.taskId);
+        const data = res.data;
+        const mappings = (data.fieldMappings || []).map((m, i) => ({ ...m, key: i }));
+        setEditMappings(mappings);
+      } catch (err) {
+        message.error('获取编辑数据失败: ' + (err.message || ''));
+        setEditOpen(false);
+      } finally {
+        setEditLoading(false);
+      }
+      return;
+    }
+
+    // 其他决策 — 直接发送
+    dispatch({ type: 'DECISION_SENT' });
     try {
       await sendDecision(state.taskId, decision);
-      // 决策发送成功后，SSE 会继续推送下一阶段事件
     } catch (err) {
       const errMsg = err?.response?.data?.msg || err?.message || '未知错误';
       message.error('决策发送失败: ' + errMsg);
-      // 恢复按钮，允许重试
+      dispatch({ type: 'DECISION_REQUIRED', decisionType: state.decision?.type, summary: state.decision?.summary, options: state.decision?.options });
+    }
+  };
+
+  // ── 提交编辑后的结果 ──
+  const handleEditSubmit = async () => {
+    dispatch({ type: 'DECISION_SENT' });
+    setEditOpen(false);
+    try {
+      const editedResult = {
+        fieldMappings: editMappings.map(({ key, ...m }) => m),
+      };
+      await sendDecision(state.taskId, 'EDIT_AND_RETRY', editedResult, '人工修正配置');
+    } catch (err) {
+      const errMsg = err?.response?.data?.msg || err?.message || '未知错误';
+      message.error('提交失败: ' + errMsg);
       dispatch({ type: 'DECISION_REQUIRED', decisionType: state.decision?.type, summary: state.decision?.summary, options: state.decision?.options });
     }
   };
@@ -613,6 +651,61 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
           icon={<CloseCircleFilled />}
         />
       )}
+
+      {/* ── 编辑弹窗 (EDIT_AND_RETRY) ── */}
+      <Modal
+        title="编辑配置后重新提交"
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={handleEditSubmit}
+        okText="提交修改"
+        cancelText="取消"
+        width={800}
+        confirmLoading={state.decisionSent}
+      >
+        <Spin spinning={editLoading}>
+          <p style={{ color: '#888', marginBottom: 12 }}>
+            修改下方字段映射后提交，系统将使用修改后的配置重新验证和干跑。
+          </p>
+          <Table
+            dataSource={editMappings}
+            size="small"
+            pagination={false}
+            rowKey="key"
+            columns={[
+              { title: '资金方字段', dataIndex: 'fundField', width: 130,
+                render: (v, _, idx) => (
+                  <Input size="small" value={v || ''}
+                    onChange={e => {
+                      const next = [...editMappings];
+                      next[idx] = { ...next[idx], fundField: e.target.value };
+                      setEditMappings(next);
+                    }} />
+                )},
+              { title: '内部路径', dataIndex: 'sourcePath', width: 150,
+                render: (v, _, idx) => (
+                  <Input size="small" value={v || ''}
+                    onChange={e => {
+                      const next = [...editMappings];
+                      next[idx] = { ...next[idx], sourcePath: e.target.value };
+                      setEditMappings(next);
+                    }} />
+                )},
+              { title: '转换函数', dataIndex: 'transform', width: 100,
+                render: (v, _, idx) => (
+                  <Input size="small" value={v || ''}
+                    onChange={e => {
+                      const next = [...editMappings];
+                      next[idx] = { ...next[idx], transform: e.target.value };
+                      setEditMappings(next);
+                    }} />
+                )},
+              { title: '置信度', dataIndex: 'confidence', width: 70,
+                render: v => <Tag color={v > 0.8 ? 'green' : 'orange'}>{Math.round((v || 0) * 100)}%</Tag> },
+            ]}
+          />
+        </Spin>
+      </Modal>
     </Card>
   );
 }

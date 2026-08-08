@@ -148,3 +148,7 @@ export const getLoopTask = (taskId) =>
 /** 发送人工决策: decision = RETRY | SKIP | EDIT_AND_RETRY | ABORT | PUBLISH */
 export const sendDecision = (taskId, decision, editedResult, comment) =>
   aiApi.post(`/api/ai/loop/${taskId}/decide`, { taskId, decision, editedResult, comment });
+
+/** 获取任务当前解析结果（用于 EDIT_AND_RETRY 编辑） */
+export const getLoopResult = (taskId) =>
+  aiApi.get(`/api/ai/loop/${taskId}/result`);
