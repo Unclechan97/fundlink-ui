@@ -11,14 +11,34 @@ export default function Flows() {
 
   const fetch = async () => {
     setLoading(true);
-    const res = await getFlows(1, 50);
-    setData(res?.data?.records ?? []);
+    try {
+      const res = await getFlows(1, 50);
+      setData(res?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
   useEffect(() => { fetch(); }, []);
 
-  const onDelete = async (id) => { await deleteFlow(id); message.success('Deleted'); fetch(); };
-  const onPublish = async (id) => { await publishFlow(id); message.success('Published'); fetch(); };
+  const onDelete = async (id) => {
+    try {
+      await deleteFlow(id);
+      message.success('Deleted');
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
+  };
+  const onPublish = async (id) => {
+    try {
+      await publishFlow(id);
+      message.success('Published');
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
+  };
 
   const columns = [
     { title: 'Code', dataIndex: 'flowCode', key: 'code' },

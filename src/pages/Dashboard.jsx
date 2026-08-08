@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Typography } from 'antd';
+import { Row, Col, Card, Statistic, Typography, message } from 'antd';
 import { BankOutlined, FileTextOutlined, ApartmentOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { getProviders, getTemplates, getFlows, getMockRules } from '../api';
 
@@ -18,7 +18,7 @@ export default function Dashboard() {
       const map = {};
       cards.forEach((c, i) => (map[c.title] = results[i]?.data?.total ?? 0));
       setCounts(map);
-    });
+    }).catch((err) => message.error('加载失败: ' + (err.message || '网络错误')));
   }, []);
 
   return (

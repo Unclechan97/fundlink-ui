@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Table, Typography, Tabs, Tag } from 'antd';
+import { Table, Typography, Tabs, Tag, message } from 'antd';
 import { getFlowInstances, getApiLogs } from '../api';
 
 export default function Logs() {
@@ -9,9 +9,13 @@ export default function Logs() {
 
   const fetch = async () => {
     setLoading(true);
-    const [ir, ar] = await Promise.all([getFlowInstances(1, 50), getApiLogs(1, 50)]);
-    setInstances(ir?.data?.records ?? []);
-    setApiLogs(ar?.data?.records ?? []);
+    try {
+      const [ir, ar] = await Promise.all([getFlowInstances(1, 50), getApiLogs(1, 50)]);
+      setInstances(ir?.data?.records ?? []);
+      setApiLogs(ar?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
   useEffect(() => { fetch(); }, []);
@@ -50,11 +54,16 @@ export default function Logs() {
             <Table rowKey="id" columns={flowCols} dataSource={instances}
               loading={loading} pagination={false} size="small"
               expandable={{
-                expandedRowRender: (r) => (
-                  <pre style={{ fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-                    {r.contextData ? JSON.stringify(JSON.parse(r.contextData), null, 2) : '(no data)'}
-                  </pre>
-                ),
+                expandedRowRender: (r) => {
+                  let ctx = r.contextData;
+                  if (ctx) {
+                    try { ctx = JSON.stringify(JSON.parse(ctx), null, 2); }
+                    catch { ctx = r.contextData; }
+                  }
+                  return <pre style={{ fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
+                    {ctx || '(no data)'}
+                  </pre>;
+                },
               }}
               style={{ background: '#fff', borderRadius: 12 }} />
           ),

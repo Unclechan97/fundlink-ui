@@ -23,37 +23,50 @@ export default function TemplateEdit() {
       getTemplates(1, 50).then((res) => {
         const t = (res?.data?.records ?? []).find((r) => r.id === +id);
         if (t) form.setFieldsValue(t);
-      });
-      getFieldMappings(id).then((res) => setMappings(res?.data ?? []));
+      }).catch((err) => message.error('加载失败: ' + (err.message || '网络错误')));
+      getFieldMappings(id).then((res) => setMappings(res?.data ?? []))
+        .catch((err) => message.error('加载失败: ' + (err.message || '网络错误')));
     }
   }, [id]);
 
   const onSave = async () => {
     const vals = await form.validateFields();
     setLoading(true);
-    if (isNew) {
-      const res = await createTemplate(vals);
-      message.success('Created');
-      nav(`/templates/${res.data}`, { replace: true });
-    } else {
-      await updateTemplate(id, vals);
-      message.success('Updated');
+    try {
+      if (isNew) {
+        const res = await createTemplate(vals);
+        message.success('Created');
+        nav(`/templates/${res.data}`, { replace: true });
+      } else {
+        await updateTemplate(id, vals);
+        message.success('Updated');
+      }
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
     }
     setLoading(false);
   };
 
   const addMapping = async () => {
     const v = await fmForm.validateFields();
-    await createFieldMapping(id, v);
-    const res = await getFieldMappings(id);
-    setMappings(res?.data ?? []);
-    fmForm.resetFields();
+    try {
+      await createFieldMapping(id, v);
+      const res = await getFieldMappings(id);
+      setMappings(res?.data ?? []);
+      fmForm.resetFields();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
   const removeMapping = async (mid) => {
-    await deleteFieldMapping(id, mid);
-    const res = await getFieldMappings(id);
-    setMappings(res?.data ?? []);
+    try {
+      await deleteFieldMapping(id, mid);
+      const res = await getFieldMappings(id);
+      setMappings(res?.data ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
   const onPreview = async () => {

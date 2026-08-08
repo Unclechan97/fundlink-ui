@@ -11,20 +11,35 @@ export default function EnumMappings() {
 
   const fetch = async () => {
     setLoading(true);
-    const res = await getEnumMappings();
-    setData(res?.data?.records ?? []);
+    try {
+      const res = await getEnumMappings();
+      setData(res?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
   useEffect(() => { fetch(); }, []);
 
   const onSave = async () => {
     const vals = await form.validateFields();
-    await createEnumMapping(vals);
-    message.success('Created');
-    setOpen(false); form.resetFields(); fetch();
+    try {
+      await createEnumMapping(vals);
+      message.success('Created');
+      setOpen(false); form.resetFields(); fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
-  const onDelete = async (id) => { await deleteEnumMapping(id); fetch(); };
+  const onDelete = async (id) => {
+    try {
+      await deleteEnumMapping(id);
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
+  };
 
   // Group by enumType
   const grouped = {};

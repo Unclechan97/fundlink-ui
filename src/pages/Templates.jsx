@@ -11,16 +11,24 @@ export default function Templates() {
 
   const fetch = async () => {
     setLoading(true);
-    const res = await getTemplates(1, 50);
-    setData(res?.data?.records ?? []);
+    try {
+      const res = await getTemplates(1, 50);
+      setData(res?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
   useEffect(() => { fetch(); }, []);
 
   const onDelete = async (id) => {
-    await deleteTemplate(id);
-    message.success('Deleted');
-    fetch();
+    try {
+      await deleteTemplate(id);
+      message.success('Deleted');
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
   const columns = [

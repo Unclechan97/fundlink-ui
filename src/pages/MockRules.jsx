@@ -16,21 +16,43 @@ export default function MockRules() {
 
   const fetch = async () => {
     setLoading(true);
-    const res = await getMockRules(1, 50);
-    setData(res?.data?.records ?? []);
+    try {
+      const res = await getMockRules(1, 50);
+      setData(res?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
   useEffect(() => { fetch(); }, []);
 
   const onSave = async () => {
     const vals = await form.validateFields();
-    if (editing) { await updateMockRule(editing.id, vals); message.success('Updated'); }
-    else { await createMockRule(vals); message.success('Created'); }
-    setOpen(false); setEditing(null); form.resetFields(); fetch();
+    try {
+      if (editing) { await updateMockRule(editing.id, vals); message.success('Updated'); }
+      else { await createMockRule(vals); message.success('Created'); }
+      setOpen(false); setEditing(null); form.resetFields(); fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
-  const onDelete = async (id) => { await deleteMockRule(id); fetch(); };
-  const onToggle = async (id) => { await toggleMockRule(id); fetch(); };
+  const onDelete = async (id) => {
+    try {
+      await deleteMockRule(id);
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
+  };
+  const onToggle = async (id) => {
+    try {
+      await toggleMockRule(id);
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
+  };
 
   const onDebug = async () => {
     const vals = await debugForm.validateFields();

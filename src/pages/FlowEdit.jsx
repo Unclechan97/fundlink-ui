@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Input, Select, Typography, message, Card, Row, Col, Form, Spin } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
+import ReactFlow, { ReactFlowProvider, useReactFlow, Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { createFlow, updateFlow, getFlows } from '../api';
 
@@ -19,6 +19,14 @@ const PALETTE = {
 let _id = 0;
 
 export default function FlowEdit() {
+  return (
+    <ReactFlowProvider>
+      <FlowEditor />
+    </ReactFlowProvider>
+  );
+}
+
+function FlowEditor() {
   const { id } = useParams();
   const isNew = !id;
   const nav = useNavigate();
@@ -28,6 +36,8 @@ export default function FlowEdit() {
   const [selNode, setSelNode] = useState(null);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [selEdge, setSelEdge] = useState(null);
+  const { screenToFlowPosition } = useReactFlow();
 
   // 组件内定义 nodeTypes
   const nodeTypes = useMemo(() => {
@@ -64,6 +74,9 @@ export default function FlowEdit() {
           } catch { /* */ }
         }
         setReady(true);
+      }).catch((err) => {
+        message.error('加载失败: ' + (err.message || '网络错误'));
+        setReady(true);
       });
     } else {
       setReady(true);
@@ -71,15 +84,19 @@ export default function FlowEdit() {
   }, [id]);
 
   const onConnect = useCallback((p) => setEdges((eds) => addEdge(p, eds)), []);
-  const onNodeClick = useCallback((_, n) => setSelNode(n), []);
+  const onNodeClick = useCallback((_, n) => { setSelEdge(null); setSelNode(n); }, []);
+  const onEdgeClick = useCallback((_, edge) => { setSelNode(null); setSelEdge(edge); }, []);
 
-  const onEdgeClick = useCallback((_, edge) => {
-    const v = prompt('SpEL (blank=unconditional):', edge.data?.conditionExpr || '');
-    if (v !== null) {
-      setEdges((eds) => eds.map((e) =>
-        e.id === edge.id ? { ...e, label: v || '', data: { ...e.data, conditionExpr: v } } : e));
-    }
-  }, []);
+  const updateEdge = (key, val) => {
+    if (!selEdge) return;
+    const patch = (e) => ({
+      ...e,
+      label: key === 'label' ? val : e.label,
+      data: { ...(e.data || {}), conditionExpr: key === 'conditionExpr' ? val : e.data?.conditionExpr },
+    });
+    setEdges((eds) => eds.map((e) => (e.id === selEdge.id ? patch(e) : e)));
+    setSelEdge((prev) => (prev && prev.id === selEdge.id ? patch(prev) : prev));
+  };
 
   const onDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }, []);
 
@@ -87,13 +104,13 @@ export default function FlowEdit() {
     e.preventDefault();
     const t = e.dataTransfer.getData('application/reactflow');
     if (!t || !PALETTE[t]) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+    const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     setNodes((nds) => [...nds, {
       id: `n${++_id}`, type: t,
-      position: { x: e.clientX - rect.left - 60, y: e.clientY - rect.top - 20 },
+      position: { x: pos.x - 60, y: pos.y - 20 },
       data: { label: PALETTE[t].label, config: {} },
     }]);
-  }, []);
+  }, [screenToFlowPosition]);
 
   const updCfg = (k, v) => {
     if (!selNode) return;
@@ -200,8 +217,19 @@ export default function FlowEdit() {
                   <Input.TextArea size="small" rows={3} placeholder="#root.riskData.score > 60" style={{ marginTop: 6 }} value={selNode.data.config?.expression || ''} onChange={(e) => updCfg('expression', e.target.value)} />
                 </>}
               </div>
+            ) : selEdge ? (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>Edge: {selEdge.id}</Typography.Text>
+                  <Button size="small" danger onClick={() => { delEdge(selEdge.id); setSelEdge(null); }}>Delete</Button>
+                </div>
+                <Input size="small" placeholder="Label" style={{ marginTop: 6 }}
+                  value={selEdge.label || ''} onChange={(e) => updateEdge('label', e.target.value)} />
+                <Input.TextArea size="small" rows={2} placeholder="SpEL condition (blank=unconditional)" style={{ marginTop: 6 }}
+                  value={selEdge.data?.conditionExpr || ''} onChange={(e) => updateEdge('conditionExpr', e.target.value)} />
+              </div>
             ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>Click node to edit | Del key to remove</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>Click node/edge to edit | Del key to remove</Typography.Text>
             )}
           </Card>
         </Col>

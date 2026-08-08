@@ -12,8 +12,12 @@ export default function Providers() {
 
   const fetch = async () => {
     setLoading(true);
-    const res = await getProviders(1, 50);
-    setData(res?.data?.records ?? []);
+    try {
+      const res = await getProviders(1, 50);
+      setData(res?.data?.records ?? []);
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
     setLoading(false);
   };
 
@@ -21,20 +25,28 @@ export default function Providers() {
 
   const onSave = async () => {
     const vals = await form.validateFields();
-    if (editing) {
-      await updateProvider(editing.id, vals);
-      message.success('Updated');
-    } else {
-      await createProvider(vals);
-      message.success('Created');
+    try {
+      if (editing) {
+        await updateProvider(editing.id, vals);
+        message.success('Updated');
+      } else {
+        await createProvider(vals);
+        message.success('Created');
+      }
+      setOpen(false); setEditing(null); form.resetFields(); fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
     }
-    setOpen(false); setEditing(null); form.resetFields(); fetch();
   };
 
   const onDelete = async (id) => {
-    await deleteProvider(id);
-    message.success('Deleted');
-    fetch();
+    try {
+      await deleteProvider(id);
+      message.success('Deleted');
+      fetch();
+    } catch (err) {
+      message.error('加载失败: ' + (err.message || '网络错误'));
+    }
   };
 
   const columns = [
