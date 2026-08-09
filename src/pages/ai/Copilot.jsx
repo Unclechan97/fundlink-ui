@@ -89,7 +89,7 @@ export default function Copilot() {
     if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
     setLoading(true);
     try {
-      const res = await analyzeDocument(docText, providerCode.trim());
+      const res = await analyzeDocument(docText, providerCode.trim(), flowType);
       const data = res.data;
       setResult(data);
       initFromResult(data);
@@ -169,7 +169,7 @@ export default function Copilot() {
         fieldMappings: mappings.map(({ accepted, ...m }) => m),
         flowDsl: result.flowDsl ? { ...result.flowDsl, nodes: flowNodes, edges: flowEdges } : null,
       };
-      const res = await applyConfig(writeResult, providerCode, 'LOAN');
+      const res = await applyConfig(writeResult, providerCode, flowType);
       message.success(`写入成功: Provider=${res.data.providerId} Template=${res.data.templateId} Mappings=${res.data.mappingCount} Flow=${res.data.flowId}`);
     } catch (e) { message.error('写入失败: ' + (e.message || '')); }
     finally { setApplying(false); }

@@ -122,8 +122,8 @@ aiApi.interceptors.response.use(
 );
 
 /** 上传接口文档 → AI 解析生成配置 */
-export const analyzeDocument = (documentText, providerCode) =>
-  aiApi.post('/api/ai/analyze', { documentText, providerCode });
+export const analyzeDocument = (documentText, providerCode, flowType = 'LOAN') =>
+  aiApi.post('/api/ai/analyze', { documentText, providerCode, flowType });
 
 /** 获取 AI 字段映射建议 */
 export const suggestMappings = (documentText, providerCode) =>
