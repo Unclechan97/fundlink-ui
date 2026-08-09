@@ -1,11 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Descriptions, Collapse, Tooltip, Select } from 'antd';
+import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Descriptions, Collapse, Tooltip, Segmented, Select } from 'antd';
 import { RobotOutlined, SendOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons';
 import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { analyzeDocument, applyConfig } from '../../api';
 import AutoLoopPanel from './AutoLoopPanel';
-import LoopTrigger from './LoopTrigger';
 import useSessionState from '../../hooks/useSessionState';
 
 const { TextArea } = Input;
@@ -22,6 +21,7 @@ const PALETTE = {
 };
 
 export default function Copilot() {
+  const [mode, setMode] = useSessionState('copilot:mode', 'manual');
   const [docText, setDocText] = useSessionState('copilot:docText', '');
   const [providerCode, setProviderCode] = useSessionState('copilot:providerCode', '');
   const [flowType, setFlowType] = useSessionState('copilot:flowType', ''); // '' = 自动识别
@@ -219,6 +219,14 @@ export default function Copilot() {
       <Title level={3}><RobotOutlined /> AI Copilot</Title>
 
       <Space style={{ marginBottom: 16 }}>
+        <Segmented
+          value={mode}
+          onChange={setMode}
+          options={[
+            { label: '✋ 手动', value: 'manual' },
+            { label: '🤖 自动', value: 'auto' },
+          ]}
+        />
         <Select
           value={flowType}
           onChange={setFlowType}
@@ -238,14 +246,16 @@ export default function Copilot() {
             onChange={e => setProviderCode(e.target.value)} style={{ width: 200 }} />
           <TextArea placeholder="粘贴资金方接口文档..." rows={6}
             value={docText} onChange={e => setDocText(e.target.value)} />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>AI 解析</Button>
+          {mode === 'manual' && (
+            <Button type="primary" icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>AI 解析</Button>
+          )}
         </Space>
       </Card>
 
-      {/* ── 手动解析结果 ── */}
-      {loading && <Spin tip="AI 正在分析..." style={{ display: 'block', margin: '40px auto' }} />}
+      {/* ── 手动模式 ── */}
+      {mode === 'manual' && loading && <Spin tip="AI 正在分析..." style={{ display: 'block', margin: '40px auto' }} />}
 
-      {result && !loading && (
+      {mode === 'manual' && result && !loading && (
             <>
               {/* ── 字段映射 ── */}
               <Card title={<span>字段映射建议 <Tag>{acceptedCount}/{mappings.length} 已采纳</Tag></span>}
@@ -337,8 +347,8 @@ export default function Copilot() {
             </>
           )}
 
-      {/* ── 自动闭环面板 ── */}
-      {docText.trim() && providerCode.trim() && (
+      {/* ── 自动模式 ── */}
+      {mode === 'auto' && docText.trim() && providerCode.trim() && (
         <AutoLoopPanel
           documentText={docText}
           providerCode={providerCode.trim()}
@@ -346,13 +356,11 @@ export default function Copilot() {
         />
       )}
 
-      {/* 浮动启停按钮 */}
-      <LoopTrigger
-        documentText={docText}
-        providerCode={providerCode}
-        flowType={flowType}
-        disabled={loading}
-      />
+      {mode === 'auto' && (!docText.trim() || !providerCode.trim()) && (
+        <Card style={{ marginBottom: 16 }}>
+          <Typography.Text type="secondary">请先输入资金方编码和接口文档，然后点击"开始闭环"启动自动流程。</Typography.Text>
+        </Card>
+      )}
     </div>
   );
 }

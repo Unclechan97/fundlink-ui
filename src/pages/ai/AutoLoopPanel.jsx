@@ -5,7 +5,7 @@ import {
   PlayCircleOutlined, StopOutlined, RedoOutlined,
   ForwardOutlined, EditOutlined, ReloadOutlined,
 } from '@ant-design/icons';
-import { createLoop, getLoopTask, sendDecision, getLoopResult } from '../../api';
+import { createLoop, getLoopTask, sendDecision, getLoopResult, cancelLoop } from '../../api';
 
 const { Text } = Typography;
 
@@ -210,17 +210,6 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   const [state, dispatch] = useReducer(reducer, initialState);
   const esRef = useRef(null);
 
-  // ── 广播阶段给 LoopTrigger ──
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('loop:phase', {
-      detail: {
-        taskId: state.taskId,
-        phase: state.currentStep || state.status,
-        type: state.status === 'completed' ? 'done' : state.status === 'failed' ? 'failed' : null,
-      }
-    }));
-  }, [state.currentStep, state.status, state.taskId]);
-
   // ── 编辑弹窗状态 ──
   const [editOpen, setEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
@@ -286,23 +275,17 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   }, []);
 
   // ── 启动闭环 ──
-  // ── 检测 LoopTrigger 创建的任务 —─
-  const triggerChecked = useRef(false);
-  useEffect(() => {
-    const raw = sessionStorage.getItem('loop:taskId');
-    if (!raw || triggerChecked.current) return;
-    const taskId = JSON.parse(raw);
-    if (!taskId) return;
-    triggerChecked.current = true;
-    // 从 loop:snapshot 获取上下文
-    const snapRaw = sessionStorage.getItem('loop:snapshot');
-    if (!snapRaw) return;
-    const snap = JSON.parse(snapRaw);
-    if (snap.documentText !== documentText) return;
-    // 自动连接 SSE（不重复创建已存在的任务）
-    dispatch({ type: 'INIT', taskId, taskNo: '' });
-    connectSSE(taskId);
-  }, []);
+
+  const handleStop = useCallback(async () => {
+    if (!state.taskId) return;
+    message.loading({ content: '正在中断...', key: 'stop', duration: 0 });
+    try {
+      await cancelLoop(state.taskId);
+      message.success({ content: '任务已中断', key: 'stop' });
+    } catch (e) {
+      message.warning({ content: '中断请求已发送', key: 'stop' });
+    }
+  }, [state.taskId]);
 
   const handleStart = useCallback(async () => {
     dispatch({ type: 'CREATING' });
@@ -554,7 +537,6 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
               </p>
               <Button
                 type="primary"
-                size="large"
                 icon={<PlayCircleOutlined />}
                 onClick={handleStart}
               >
@@ -567,6 +549,13 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
               <p style={{ marginTop: 12, color: '#888' }}>正在创建任务...</p>
             </>
           )}
+        </div>
+      )}
+
+      {/* ── 运行中：中断按钮 ── */}
+      {state.status === 'running' && (
+        <div style={{ textAlign: 'center', padding: '12px 0' }}>
+          <Button danger icon={<StopOutlined />} onClick={handleStop}>中断任务</Button>
         </div>
       )}
 
