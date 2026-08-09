@@ -176,6 +176,10 @@ function reducer(state, action) {
         ...state,
         status: 'failed',
         result: { type: 'failed', error: action.error, rounds: action.rounds },
+        // 清除所有阶段 active 状态，停止转圈
+        phases: Object.fromEntries(
+          Object.entries(state.phases).map(([k, v]) => [k, { ...v, status: v.status === 'active' ? 'pending' : v.status }])
+        ),
       };
 
     case 'SSE_ERROR':
