@@ -24,7 +24,7 @@ export default function Copilot() {
   const [mode, setMode] = useSessionState('copilot:mode', 'manual');
   const [docText, setDocText] = useSessionState('copilot:docText', '');
   const [providerCode, setProviderCode] = useSessionState('copilot:providerCode', '');
-  const [flowType, setFlowType] = useSessionState('copilot:flowType', 'LOAN');
+  const [flowType, setFlowType] = useSessionState('copilot:flowType', ''); // '' = 自动识别
   const [result, setResult] = useSessionState('copilot:result', null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -93,6 +93,10 @@ export default function Copilot() {
       const data = res.data;
       setResult(data);
       initFromResult(data);
+      // 自动识别 flowType 时同步 LLM 返回的类型
+      if (data.flowType && data.flowType !== flowType) {
+        setFlowType(data.flowType);
+      }
       message.success('AI 解析完成');
     } catch (e) {
       message.error('AI 服务暂不可用: ' + (e.message || ''));
@@ -228,6 +232,7 @@ export default function Copilot() {
           onChange={setFlowType}
           style={{ width: 120 }}
           options={[
+            { label: '🔍 自动识别', value: '' },
             { label: '放款 (LOAN)', value: 'LOAN' },
             { label: '授信 (CREDIT)', value: 'CREDIT' },
             { label: '还款 (REPAY)', value: 'REPAY' },

@@ -122,7 +122,7 @@ aiApi.interceptors.response.use(
 );
 
 /** 上传接口文档 → AI 解析生成配置 */
-export const analyzeDocument = (documentText, providerCode, flowType = 'LOAN') =>
+export const analyzeDocument = (documentText, providerCode, flowType = '') =>
   aiApi.post('/api/ai/analyze', { documentText, providerCode, flowType });
 
 /** 获取 AI 字段映射建议 */
@@ -138,7 +138,7 @@ export const applyConfig = (result, providerCode, flowType) =>
 // ============================================================
 
 /** 创建自动闭环任务，返回 {taskId, taskNo} */
-export const createLoop = (documentText, providerCode, flowType = 'LOAN') =>
+export const createLoop = (documentText, providerCode, flowType = '') =>
   aiApi.post('/api/ai/loop', { documentText, providerCode, flowType });
 
 /** 查询闭环任务状态 */

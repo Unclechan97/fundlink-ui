@@ -262,6 +262,10 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
       es.close();
     });
 
+    es.addEventListener('ping', () => {
+      // 心跳帧 — 无需处理，仅保持连接活跃
+    });
+
     es.onerror = () => {
       // 只在非终态时报告连接错误
       dispatch({ type: 'SSE_ERROR' });
