@@ -278,14 +278,15 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
 
   const handleStop = useCallback(async () => {
     if (!state.taskId) return;
-    message.loading({ content: '正在中断...', key: 'stop', duration: 0 });
     try {
       await cancelLoop(state.taskId);
-      message.success({ content: '任务已中断', key: 'stop' });
+      dispatch({ type: 'TASK_FAILED', error: '用户中断', rounds: state.round });
+      clearSnapshot();
+      message.success('任务已中断');
     } catch (e) {
-      message.warning({ content: '中断请求已发送', key: 'stop' });
+      message.warning('中断请求发送失败');
     }
-  }, [state.taskId]);
+  }, [state.taskId, state.round]);
 
   const handleStart = useCallback(async () => {
     dispatch({ type: 'CREATING' });
