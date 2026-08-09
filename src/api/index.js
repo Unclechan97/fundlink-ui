@@ -149,6 +149,10 @@ export const getLoopTask = (taskId) =>
 export const sendDecision = (taskId, decision, editedResult, comment) =>
   aiApi.post(`/api/ai/loop/${taskId}/decide`, { taskId, decision, editedResult, comment });
 
+/** 中断正在执行的任务 */
+export const cancelLoop = (taskId) =>
+  aiApi.post(`/api/ai/loop/${taskId}/cancel`);
+
 /** 获取任务当前解析结果（用于 EDIT_AND_RETRY 编辑） */
 export const getLoopResult = (taskId) =>
   aiApi.get(`/api/ai/loop/${taskId}/result`);

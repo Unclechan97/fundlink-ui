@@ -210,6 +210,17 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   const [state, dispatch] = useReducer(reducer, initialState);
   const esRef = useRef(null);
 
+  // ── 广播阶段给 LoopTrigger ──
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('loop:phase', {
+      detail: {
+        taskId: state.taskId,
+        phase: state.currentStep || state.status,
+        type: state.status === 'completed' ? 'done' : state.status === 'failed' ? 'failed' : null,
+      }
+    }));
+  }, [state.currentStep, state.status, state.taskId]);
+
   // ── 编辑弹窗状态 ──
   const [editOpen, setEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
@@ -275,6 +286,24 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   }, []);
 
   // ── 启动闭环 ──
+  // ── 检测 LoopTrigger 创建的任务 —─
+  const triggerChecked = useRef(false);
+  useEffect(() => {
+    const raw = sessionStorage.getItem('loop:taskId');
+    if (!raw || triggerChecked.current) return;
+    const taskId = JSON.parse(raw);
+    if (!taskId) return;
+    triggerChecked.current = true;
+    // 从 loop:snapshot 获取上下文
+    const snapRaw = sessionStorage.getItem('loop:snapshot');
+    if (!snapRaw) return;
+    const snap = JSON.parse(snapRaw);
+    if (snap.documentText !== documentText) return;
+    // 自动连接 SSE（不重复创建已存在的任务）
+    dispatch({ type: 'INIT', taskId, taskNo: '' });
+    connectSSE(taskId);
+  }, []);
+
   const handleStart = useCallback(async () => {
     dispatch({ type: 'CREATING' });
     try {
