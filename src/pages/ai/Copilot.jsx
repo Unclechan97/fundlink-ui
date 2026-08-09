@@ -336,8 +336,6 @@ export default function Copilot() {
               </Tooltip>
             </>
           )}
-        </>
-      )}
 
       {/* ── 自动闭环面板 ── */}
       {docText.trim() && providerCode.trim() && (
