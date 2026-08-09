@@ -62,6 +62,12 @@ const PHASE_TO_STEP = { ANALYZE: 0, VALIDATE: 1, DRYRUN: 2 };
 
 // ── Reducer ──
 function reducer(state, action) {
+  // 终态时忽略非终态事件 — 防止 cancel 后 SSE 事件覆盖 failed 状态
+  const isTerminal = state.status === 'failed' || state.status === 'completed';
+  if (isTerminal && action.type !== 'TASK_FAILED' && action.type !== 'TASK_COMPLETE') {
+    return state;
+  }
+
   switch (action.type) {
     case 'CREATING':
       return { ...initialState, status: 'creating' };
