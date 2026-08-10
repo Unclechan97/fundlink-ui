@@ -91,9 +91,10 @@ export default function Copilot() {
     }
   }, []); // 仅 mount 时执行一次
 
-  // ── Phase 4: 通用发送 — 先识别意图再路由 ──
+  // ── Phase 4: 通用发送 — 识别意图 → 拆分 → 自动并行处理 ──
   const handleSend = async () => {
     if (!docText.trim()) { message.warning('请输入内容'); return; }
+    if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
     setLoading(true);
     setResult(null);
     setQaAnswer(null);
@@ -111,25 +112,54 @@ export default function Copilot() {
 
       // Step 2: 按意图路由
       if (intentType === 'INTERFACE_DEV') {
-        // 需要 providerCode
-        if (!providerCode.trim()) { message.warning('请输入资金方编码'); setLoading(false); return; }
-        // 先拆分
+        // Step 2a: 拆分
         const splitRes = await splitDocument(docText, providerCode.trim());
         const interfaces = splitRes.data.interfaces || [];
         setSplitInterfaces(interfaces);
         if (interfaces.length === 0) {
           message.warning('未识别到接口定义');
+          setLoading(false);
+          return;
+        }
+        const allIds = interfaces.map(s => s.interfaceId);
+        setSelectedIds(allIds);
+
+        // Step 2b: 自动并行处理全部接口（单次请求）
+        if (interfaces.length >= 2) {
+          message.loading({ content: `正在并行处理 ${interfaces.length} 个接口...`, key: 'multi', duration: 0 });
+        }
+        const analyzeRes = await analyzeDocument(docText, providerCode.trim(), flowType, allIds);
+        const data = analyzeRes.data;
+
+        if (data.interfaces) {
+          // 多接口结果
+          message.success({ content: `${data.successCount}/${data.totalCount} 成功`, key: 'multi' });
+          // 取第一个成功的结果展示
+          const firstSuccess = data.interfaces.find(i => i.status === 'SUCCESS');
+          if (firstSuccess?.result) {
+            setResult(firstSuccess.result);
+            initFromResult(firstSuccess.result);
+          }
+          // 更新 split 列表带上状态
+          setSplitInterfaces(prev => prev.map(s => {
+            const ri = data.interfaces.find(i => i.interfaceId === s.interfaceId);
+            return ri ? { ...s, status: ri.status, errorMessage: ri.errorMessage } : s;
+          }));
         } else {
-          // 默认全选
-          setSelectedIds(interfaces.map(s => s.interfaceId));
-          message.success(`检测到 ${interfaces.length} 个接口定义`);
+          // 单接口结果（向后兼容）
+          setResult(data);
+          initFromResult(data);
+          if (data.flowType && data.flowType !== flowType) setFlowType(data.flowType);
+          message.success('AI 解析完成');
         }
       } else if (intentType === 'KNOWLEDGE_QA') {
         const qaRes = await askQuestion(docText);
         setQaAnswer(qaRes.data.answer);
+        message.success('问答完成');
       } else if (intentType === 'TROUBLESHOOTING') {
         const tsRes = await troubleshoot(docText);
         setTroubleshootResult(tsRes.data.analysis);
+        message.success('诊断完成');
       }
     } catch (e) {
       message.error('AI 服务暂不可用: ' + (e.message || ''));
@@ -365,12 +395,9 @@ export default function Copilot() {
           <TextArea placeholder="粘贴接口文档 / 输入业务问题 / 贴入报错日志..." rows={6}
             value={docText} onChange={e => setDocText(e.target.value)} />
           <Space>
-            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading}>发送</Button>
-            {mode === 'manual' && splitInterfaces.length > 0 && selectedIds.length > 0 && (
-              <Button type="primary" icon={<SendOutlined />} onClick={handleManualAnalyze} loading={loading}>
-                解析选中接口 ({selectedIds.length})
-              </Button>
-            )}
+            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading}>
+              {loading ? '处理中...' : 'AI 解析'}
+            </Button>
           </Space>
         </Space>
       </Card>
@@ -430,11 +457,14 @@ export default function Copilot() {
               <Button size="small" onClick={() => setSelectedIds([])}>取消</Button>
             </Space>
           }>
-          {splitInterfaces.map((iface, idx) => (
+          {splitInterfaces.map((iface, idx) => {
+            const isSelected = selectedIds.includes(iface.interfaceId);
+            const statusColor = iface.status === 'SUCCESS' ? 'green' : iface.status === 'FAILED' ? 'red' : 'default';
+            return (
             <div key={iface.interfaceId} style={{
               padding: '8px 12px', margin: '4px 0', borderRadius: 6,
-              background: selectedIds.includes(iface.interfaceId) ? '#e6f7ff' : '#fafafa',
-              border: `1px solid ${selectedIds.includes(iface.interfaceId) ? '#91d5ff' : '#f0f0f0'}`,
+              background: isSelected ? '#e6f7ff' : '#fafafa',
+              border: `1px solid ${isSelected ? '#91d5ff' : '#f0f0f0'}`,
               cursor: 'pointer',
             }} onClick={() => {
               setSelectedIds(prev => prev.includes(iface.interfaceId)
@@ -442,14 +472,16 @@ export default function Copilot() {
                 : [...prev, iface.interfaceId]);
             }}>
               <Space>
-                <input type="checkbox" checked={selectedIds.includes(iface.interfaceId)} readOnly />
+                <input type="checkbox" checked={isSelected} readOnly />
                 <Tag>{idx + 1}</Tag>
                 <Text strong>{iface.interfaceName}</Text>
                 {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
-                {iface.flowType && <Tag>{iface.flowType}</Tag>}
+                {iface.status && <Tag color={statusColor}>{iface.status}</Tag>}
+                {iface.errorMessage && <Text type="danger" style={{ fontSize: 12 }}>{iface.errorMessage}</Text>}
               </Space>
             </div>
-          ))}
+            );
+          })}
           {splitInterfaces.length > 0 && (
             <div style={{ marginTop: 12 }}>
               <Space>
