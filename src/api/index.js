@@ -156,3 +156,23 @@ export const cancelLoop = (taskId) =>
 /** 获取任务当前解析结果（用于 EDIT_AND_RETRY 编辑） */
 export const getLoopResult = (taskId) =>
   aiApi.get(`/api/ai/loop/${taskId}/result`);
+
+// ============================================================
+// Phase 2+3: 多接口支持 API
+// ============================================================
+
+/** 意图识别 */
+export const detectIntent = (userInput) =>
+  aiApi.post('/api/ai/intent', { userInput });
+
+/** 文档拆分 + 去重 */
+export const splitDocument = (documentText, providerCode) =>
+  aiApi.post('/api/ai/split', { documentText, providerCode });
+
+/** 知识问答 */
+export const askQuestion = (userInput) =>
+  aiApi.post('/api/ai/qa', { userInput });
+
+/** 问题排查 */
+export const troubleshoot = (userInput) =>
+  aiApi.post('/api/ai/troubleshoot', { userInput });

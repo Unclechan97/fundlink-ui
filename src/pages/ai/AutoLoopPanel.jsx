@@ -272,6 +272,43 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
       es.close();
     });
 
+    // ── Phase 3: 多接口事件 ──
+    es.addEventListener('split:start', () => {
+      // 开始拆分 — 可显示"正在拆分文档..."
+    });
+
+    es.addEventListener('split:complete', (e) => {
+      // 拆分完成 — { totalCount, interfaces: [{id, name, endpoint}] }
+    });
+
+    es.addEventListener('interface:start', (e) => {
+      // 单个接口开始 — { interfaceId, name, index, total }
+    });
+
+    es.addEventListener('interface:phase:start', (e) => {
+      // { interfaceId, phase, round, maxRounds }
+    });
+
+    es.addEventListener('interface:phase:progress', (e) => {
+      // { interfaceId, phase, message }
+    });
+
+    es.addEventListener('interface:phase:complete', (e) => {
+      // { interfaceId, phase, summary }
+    });
+
+    es.addEventListener('interface:phase:error', (e) => {
+      // { interfaceId, phase, message }
+    });
+
+    es.addEventListener('interface:complete', (e) => {
+      // { interfaceId, name, status, summary }
+    });
+
+    es.addEventListener('all:complete', (e) => {
+      // { totalCount, successCount, failedCount }
+    });
+
     es.addEventListener('ping', () => {
       // 心跳帧 — 无需处理，仅保持连接活跃
     });

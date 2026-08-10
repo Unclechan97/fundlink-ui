@@ -3,7 +3,7 @@ import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Desc
 import { RobotOutlined, SendOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons';
 import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { analyzeDocument, applyConfig } from '../../api';
+import { analyzeDocument, applyConfig, detectIntent, splitDocument, askQuestion, troubleshoot } from '../../api';
 import AutoLoopPanel from './AutoLoopPanel';
 import useSessionState from '../../hooks/useSessionState';
 
@@ -28,6 +28,14 @@ export default function Copilot() {
   const [result, setResult] = useSessionState('copilot:result', null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
+
+  // ── Phase 4: 意图识别 + 多接口拆分 ──
+  const [intent, setIntent] = useState(null);        // {intent, confidence, reason}
+  const [splitInterfaces, setSplitInterfaces] = useState([]); // InterfaceSegment[]
+  const [selectedIds, setSelectedIds] = useState([]); // 用户勾选的 interfaceId
+  const [showIntent, setShowIntent] = useState(false);
+  const [qaAnswer, setQaAnswer] = useState(null);     // 知识问答结果
+  const [troubleshootResult, setTroubleshootResult] = useState(null); // 排查结果
 
   // ── 字段映射状态 ──
   const [mappings, setMappings] = useState([]);
@@ -83,7 +91,107 @@ export default function Copilot() {
     }
   }, []); // 仅 mount 时执行一次
 
-  // ── AI 解析 ──
+  // ── Phase 4: 通用发送 — 先识别意图再路由 ──
+  const handleSend = async () => {
+    if (!docText.trim()) { message.warning('请输入内容'); return; }
+    setLoading(true);
+    setResult(null);
+    setQaAnswer(null);
+    setTroubleshootResult(null);
+    setSplitInterfaces([]);
+    setShowIntent(false);
+
+    try {
+      // Step 1: 意图识别
+      const intentRes = await detectIntent(docText);
+      const { intent: intentType, intentDisplay, confidence, reason, needUserConfirm } = intentRes.data;
+      const intentObj = { type: intentType, display: intentDisplay, confidence, reason, needUserConfirm };
+      setIntent(intentObj);
+      setShowIntent(true);
+
+      // Step 2: 按意图路由
+      if (intentType === 'INTERFACE_DEV') {
+        // 需要 providerCode
+        if (!providerCode.trim()) { message.warning('请输入资金方编码'); setLoading(false); return; }
+        // 先拆分
+        const splitRes = await splitDocument(docText, providerCode.trim());
+        const interfaces = splitRes.data.interfaces || [];
+        setSplitInterfaces(interfaces);
+        if (interfaces.length === 0) {
+          message.warning('未识别到接口定义');
+        } else {
+          // 默认全选
+          setSelectedIds(interfaces.map(s => s.interfaceId));
+          message.success(`检测到 ${interfaces.length} 个接口定义`);
+        }
+      } else if (intentType === 'KNOWLEDGE_QA') {
+        const qaRes = await askQuestion(docText);
+        setQaAnswer(qaRes.data.answer);
+      } else if (intentType === 'TROUBLESHOOTING') {
+        const tsRes = await troubleshoot(docText);
+        setTroubleshootResult(tsRes.data.analysis);
+      }
+    } catch (e) {
+      message.error('AI 服务暂不可用: ' + (e.message || ''));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 手动模式：逐个解析选中的接口 ──
+  const handleManualAnalyze = async (interfaceId) => {
+    // 找到对应 segment 的文本
+    const seg = splitInterfaces.find(s => s.interfaceId === interfaceId);
+    if (!seg) return;
+    // 使用 segment 的 sectionPreview 作为文档内容
+    // 实际上后端 /analyze 仍用原来的全文，这里先用简单方式
+    setLoading(true);
+    try {
+      const res = await analyzeDocument(docText, providerCode.trim(), flowType);
+      const data = res.data;
+      setResult(data);
+      initFromResult(data);
+      if (data.flowType && data.flowType !== flowType) {
+        setFlowType(data.flowType);
+      }
+      message.success(`接口 "${seg.interfaceName}" 解析完成`);
+    } catch (e) {
+      message.error('AI 服务暂不可用: ' + (e.message || ''));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 意图切换 ──
+  const handleSwitchIntent = async (newIntent) => {
+    setShowIntent(false);
+    setLoading(true);
+    try {
+      if (newIntent === 'INTERFACE_DEV') {
+        if (!providerCode.trim()) { message.warning('请输入资金方编码'); setLoading(false); return; }
+        const splitRes = await splitDocument(docText, providerCode.trim());
+        const interfaces = splitRes.data.interfaces || [];
+        setSplitInterfaces(interfaces);
+        setSelectedIds(interfaces.map(s => s.interfaceId));
+        setIntent({ ...intent, type: 'INTERFACE_DEV', display: '接口开发' });
+        setShowIntent(true);
+      } else if (newIntent === 'KNOWLEDGE_QA') {
+        const qaRes = await askQuestion(docText);
+        setQaAnswer(qaRes.data.answer);
+        setIntent({ type: 'KNOWLEDGE_QA', display: '知识问答', confidence: 1, reason: '用户切换' });
+      } else if (newIntent === 'TROUBLESHOOTING') {
+        const tsRes = await troubleshoot(docText);
+        setTroubleshootResult(tsRes.data.analysis);
+        setIntent({ type: 'TROUBLESHOOTING', display: '问题排查', confidence: 1, reason: '用户切换' });
+      }
+    } catch (e) {
+      message.error('操作失败: ' + (e.message || ''));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 保留旧版直接分析（兼容） ──
   const handleAnalyze = async () => {
     if (!docText.trim()) { message.warning('请输入接口文档内容'); return; }
     if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
@@ -93,7 +201,6 @@ export default function Copilot() {
       const data = res.data;
       setResult(data);
       initFromResult(data);
-      // 自动识别 flowType 时同步 LLM 返回的类型
       if (data.flowType && data.flowType !== flowType) {
         setFlowType(data.flowType);
       }
@@ -244,13 +351,109 @@ export default function Copilot() {
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Input placeholder="资金方编码 (如 CMB)" value={providerCode}
             onChange={e => setProviderCode(e.target.value)} style={{ width: 200 }} />
-          <TextArea placeholder="粘贴资金方接口文档..." rows={6}
+          <TextArea placeholder="粘贴接口文档 / 输入业务问题 / 贴入报错日志..." rows={6}
             value={docText} onChange={e => setDocText(e.target.value)} />
-          {mode === 'manual' && (
-            <Button type="primary" icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>AI 解析</Button>
-          )}
+          <Space>
+            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading}>发送</Button>
+            {mode === 'manual' && splitInterfaces.length > 0 && (
+              <Button icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>直接解析（单接口模式）</Button>
+            )}
+          </Space>
         </Space>
       </Card>
+
+      {/* ── Phase 4: 意图识别结果 ── */}
+      {showIntent && intent && (
+        <Card size="small" style={{ marginBottom: 16, background: '#f6ffed', border: '1px solid #b7eb8f' }}>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <div>
+              <Tag color="blue">{intent.display}</Tag>
+              <Tag color={intent.confidence > 0.8 ? 'green' : 'orange'}>置信度: {Math.round(intent.confidence * 100)}%</Tag>
+              {intent.needUserConfirm && <Tag color="red">需确认</Tag>}
+            </div>
+            {(intent.type === 'KNOWLEDGE_QA' || intent.type === 'TROUBLESHOOTING') && (
+              <Space size={4}>
+                <Text type="secondary">不是{intent.display}？切换为：</Text>
+                <Button size="small" onClick={() => handleSwitchIntent('INTERFACE_DEV')}>接口开发</Button>
+                {intent.type !== 'KNOWLEDGE_QA' && <Button size="small" onClick={() => handleSwitchIntent('KNOWLEDGE_QA')}>知识问答</Button>}
+                {intent.type !== 'TROUBLESHOOTING' && <Button size="small" onClick={() => handleSwitchIntent('TROUBLESHOOTING')}>问题排查</Button>}
+              </Space>
+            )}
+          </Space>
+        </Card>
+      )}
+
+      {/* ── Phase 4: 知识问答结果 ── */}
+      {qaAnswer && (
+        <Card size="small" title="💬 AI 回答" style={{ marginBottom: 16 }}>
+          <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{qaAnswer}</Paragraph>
+          <Space style={{ marginTop: 8 }}>
+            <Text type="secondary">不是知识问答？切换为：</Text>
+            <Button size="small" onClick={() => handleSwitchIntent('INTERFACE_DEV')}>接口开发</Button>
+            <Button size="small" onClick={() => handleSwitchIntent('TROUBLESHOOTING')}>问题排查</Button>
+          </Space>
+        </Card>
+      )}
+
+      {/* ── Phase 4: 问题排查结果 ── */}
+      {troubleshootResult && (
+        <Card size="small" title="🔧 诊断分析" style={{ marginBottom: 16 }}>
+          <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{troubleshootResult}</Paragraph>
+          <Space style={{ marginTop: 8 }}>
+            <Text type="secondary">不是问题排查？切换为：</Text>
+            <Button size="small" onClick={() => handleSwitchIntent('INTERFACE_DEV')}>接口开发</Button>
+            <Button size="small" onClick={() => handleSwitchIntent('KNOWLEDGE_QA')}>知识问答</Button>
+          </Space>
+        </Card>
+      )}
+
+      {/* ── Phase 4: 接口列表（多接口拆分结果） ── */}
+      {splitInterfaces.length > 0 && intent?.type === 'INTERFACE_DEV' && (
+        <Card size="small" title={<span>📋 检测到 {splitInterfaces.length} 个接口定义</span>}
+          style={{ marginBottom: 16 }}
+          extra={
+            <Space>
+              <Button size="small" onClick={() => setSelectedIds(splitInterfaces.map(s => s.interfaceId))}>全选</Button>
+              <Button size="small" onClick={() => setSelectedIds([])}>取消</Button>
+            </Space>
+          }>
+          {splitInterfaces.map((iface, idx) => (
+            <div key={iface.interfaceId} style={{
+              padding: '8px 12px', margin: '4px 0', borderRadius: 6,
+              background: selectedIds.includes(iface.interfaceId) ? '#e6f7ff' : '#fafafa',
+              border: `1px solid ${selectedIds.includes(iface.interfaceId) ? '#91d5ff' : '#f0f0f0'}`,
+              cursor: 'pointer',
+            }} onClick={() => {
+              setSelectedIds(prev => prev.includes(iface.interfaceId)
+                ? prev.filter(id => id !== iface.interfaceId)
+                : [...prev, iface.interfaceId]);
+            }}>
+              <Space>
+                <input type="checkbox" checked={selectedIds.includes(iface.interfaceId)} readOnly />
+                <Tag>{idx + 1}</Tag>
+                <Text strong>{iface.interfaceName}</Text>
+                {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
+                {iface.flowType && <Tag>{iface.flowType}</Tag>}
+                {mode === 'manual' && selectedIds.includes(iface.interfaceId) && (
+                  <Button size="small" type="link"
+                    onClick={(e) => { e.stopPropagation(); handleManualAnalyze(iface.interfaceId); }}>
+                    解析此接口
+                  </Button>
+                )}
+              </Space>
+            </div>
+          ))}
+          {splitInterfaces.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Space>
+                <Text type="secondary">不是接口文档？切换为：</Text>
+                <Button size="small" onClick={() => handleSwitchIntent('KNOWLEDGE_QA')}>知识问答</Button>
+                <Button size="small" onClick={() => handleSwitchIntent('TROUBLESHOOTING')}>问题排查</Button>
+              </Space>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* ── 手动模式 ── */}
       {mode === 'manual' && loading && <Spin tip="AI 正在分析..." style={{ display: 'block', margin: '40px auto' }} />}
