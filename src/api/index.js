@@ -121,9 +121,9 @@ aiApi.interceptors.response.use(
   (err) => Promise.reject(err)
 );
 
-/** 上传接口文档 → AI 解析生成配置 */
-export const analyzeDocument = (documentText, providerCode, flowType = '') =>
-  aiApi.post('/api/ai/analyze', { documentText, providerCode, flowType });
+/** 上传接口文档 → AI 解析生成配置（支持多接口） */
+export const analyzeDocument = (documentText, providerCode, flowType = '', selectedInterfaceIds = null) =>
+  aiApi.post('/api/ai/analyze', { documentText, providerCode, flowType, selectedInterfaceIds });
 
 /** 获取 AI 字段映射建议 */
 export const suggestMappings = (documentText, providerCode) =>

@@ -138,13 +138,45 @@ export default function Copilot() {
     }
   };
 
-  // ── 手动模式：逐个解析选中的接口 ──
-  const handleManualAnalyze = async (interfaceId) => {
-    // 找到对应 segment 的文本
-    const seg = splitInterfaces.find(s => s.interfaceId === interfaceId);
-    if (!seg) return;
-    // 使用 segment 的 sectionPreview 作为文档内容
-    // 实际上后端 /analyze 仍用原来的全文，这里先用简单方式
+  // ── 手动模式：解析选中的接口（多接口并行） ──
+  const handleManualAnalyze = async () => {
+    if (selectedIds.length === 0) { message.warning('请至少选择一个接口'); return; }
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await analyzeDocument(docText, providerCode.trim(), flowType, selectedIds);
+      const data = res.data;
+      // 多接口返回聚合结构，单接口返回扁平 RequirementResult
+      if (data.interfaces) {
+        // 多接口结果 — 取第一个成功的展示（后续可扩展多卡片）
+        const firstSuccess = data.interfaces.find(i => i.status === 'SUCCESS');
+        if (firstSuccess?.result) {
+          setResult(firstSuccess.result);
+          initFromResult(firstSuccess.result);
+          message.success(`${data.successCount}/${data.totalCount} 个接口解析成功`);
+        } else {
+          message.warning('所有接口解析失败');
+        }
+      } else {
+        // 单接口结果（向后兼容）
+        setResult(data);
+        initFromResult(data);
+        if (data.flowType && data.flowType !== flowType) {
+          setFlowType(data.flowType);
+        }
+        message.success('AI 解析完成');
+      }
+    } catch (e) {
+      message.error('AI 服务暂不可用: ' + (e.message || ''));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── 保留旧版直接分析（兼容） ──
+  const handleAnalyze = async () => {
+    if (!docText.trim()) { message.warning('请输入接口文档内容'); return; }
+    if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
     setLoading(true);
     try {
       const res = await analyzeDocument(docText, providerCode.trim(), flowType);
@@ -154,7 +186,7 @@ export default function Copilot() {
       if (data.flowType && data.flowType !== flowType) {
         setFlowType(data.flowType);
       }
-      message.success(`接口 "${seg.interfaceName}" 解析完成`);
+      message.success('AI 解析完成');
     } catch (e) {
       message.error('AI 服务暂不可用: ' + (e.message || ''));
     } finally {
@@ -186,27 +218,6 @@ export default function Copilot() {
       }
     } catch (e) {
       message.error('操作失败: ' + (e.message || ''));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── 保留旧版直接分析（兼容） ──
-  const handleAnalyze = async () => {
-    if (!docText.trim()) { message.warning('请输入接口文档内容'); return; }
-    if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
-    setLoading(true);
-    try {
-      const res = await analyzeDocument(docText, providerCode.trim(), flowType);
-      const data = res.data;
-      setResult(data);
-      initFromResult(data);
-      if (data.flowType && data.flowType !== flowType) {
-        setFlowType(data.flowType);
-      }
-      message.success('AI 解析完成');
-    } catch (e) {
-      message.error('AI 服务暂不可用: ' + (e.message || ''));
     } finally {
       setLoading(false);
     }
@@ -355,8 +366,10 @@ export default function Copilot() {
             value={docText} onChange={e => setDocText(e.target.value)} />
           <Space>
             <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading}>发送</Button>
-            {mode === 'manual' && splitInterfaces.length > 0 && (
-              <Button icon={<SendOutlined />} onClick={handleAnalyze} loading={loading}>直接解析（单接口模式）</Button>
+            {mode === 'manual' && splitInterfaces.length > 0 && selectedIds.length > 0 && (
+              <Button type="primary" icon={<SendOutlined />} onClick={handleManualAnalyze} loading={loading}>
+                解析选中接口 ({selectedIds.length})
+              </Button>
             )}
           </Space>
         </Space>
@@ -434,12 +447,6 @@ export default function Copilot() {
                 <Text strong>{iface.interfaceName}</Text>
                 {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
                 {iface.flowType && <Tag>{iface.flowType}</Tag>}
-                {mode === 'manual' && selectedIds.includes(iface.interfaceId) && (
-                  <Button size="small" type="link"
-                    onClick={(e) => { e.stopPropagation(); handleManualAnalyze(iface.interfaceId); }}>
-                    解析此接口
-                  </Button>
-                )}
               </Space>
             </div>
           ))}
