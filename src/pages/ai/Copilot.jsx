@@ -84,6 +84,11 @@ export default function Copilot() {
     setSelFlowEl(null);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 挂载时清除残留的自动闭环快照 ──
+  useEffect(() => {
+    try { sessionStorage.removeItem('autoloop:snapshot'); } catch(e) {}
+  }, []);
+
   // ── 页面切回时恢复持久化的 result ──
   const hasRestored = useRef(false);
   useEffect(() => {
@@ -493,25 +498,31 @@ export default function Copilot() {
             return (
             <div key={iface.interfaceId} style={{
               padding: '8px 12px', margin: '4px 0', borderRadius: 6,
-              background: isActive ? '#e6f7ff' : isSelected ? '#f6ffed' : '#fafafa',
-              border: `1px solid ${isActive ? '#1890ff' : isSelected ? '#b7eb8f' : '#f0f0f0'}`,
-              cursor: 'pointer',
-            }} onClick={() => {
-              // 预处理：勾选/取消
-              setSelectedIds(prev => prev.includes(iface.interfaceId)
-                ? prev.filter(id => id !== iface.interfaceId)
-                : [...prev, iface.interfaceId]);
-              // 有结果时切过去看
-              if (hasResult) handleSwitchInterface(iface.interfaceId);
+              background: isActive ? '#e6f7ff' : '#fafafa',
+              border: `1px solid ${isActive ? '#1890ff' : '#f0f0f0'}`,
             }}>
-              <Space>
-                <input type="checkbox" checked={isSelected} readOnly />
-                <Tag>{idx + 1}</Tag>
-                <Text strong={isActive}>{iface.interfaceName}</Text>
-                {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
-                {iface.status && <Tag color={statusColor}>{iface.status}</Tag>}
-                {iface.errorMessage && <Text type="danger" style={{ fontSize: 12 }}>{iface.errorMessage}</Text>}
-                {hasResult && isActive && <Tag color="blue">当前查看</Tag>}
+              <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Space>
+                  {/* 勾选框 — 单独点击区域，不触发切换 */}
+                  <input type="checkbox" checked={isSelected} style={{ cursor: 'pointer' }}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedIds(prev => prev.includes(iface.interfaceId)
+                        ? prev.filter(id => id !== iface.interfaceId)
+                        : [...prev, iface.interfaceId]);
+                    }} />
+                  <Tag>{idx + 1}</Tag>
+                  {/* 接口名 — 点击切换到该接口结果 */}
+                  <Text strong={isActive} style={{ cursor: hasResult ? 'pointer' : 'default' }}
+                    onClick={() => { if (hasResult) handleSwitchInterface(iface.interfaceId); }}>
+                    {iface.interfaceName}
+                  </Text>
+                  {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
+                  {iface.status && <Tag color={statusColor}>{iface.status}</Tag>}
+                  {iface.errorMessage && <Text type="danger" style={{ fontSize: 12 }}>{iface.errorMessage}</Text>}
+                  {hasResult && isActive && <Tag color="blue">当前查看</Tag>}
+                </Space>
+                {/* 单个接口写入按钮 — 后续可用 */}
               </Space>
             </div>
             );
@@ -624,7 +635,24 @@ export default function Copilot() {
           )}
 
       {/* ── 自动模式 ── */}
-      {mode === 'auto' && docText.trim() && providerCode.trim() && (
+      {mode === 'auto' && (
+        <Card style={{ marginBottom: 16 }}>
+          <Typography.Text type="secondary">
+            自动闭环模式：先切换到「手动」模式完成接口解析，再切回「自动」启动闭环流程。
+          </Typography.Text>
+        </Card>
+      )}
+
+      {mode === 'auto' && docText.trim() && providerCode.trim() && splitInterfaces.length > 0 && (
+        <AutoLoopPanel
+          documentText={docText}
+          providerCode={providerCode.trim()}
+          flowType={flowType}
+          selectedInterfaceIds={selectedIds}
+        />
+      )}
+
+      {mode === 'auto' && docText.trim() && providerCode.trim() && splitInterfaces.length === 0 && (
         <AutoLoopPanel
           documentText={docText}
           providerCode={providerCode.trim()}
@@ -634,7 +662,7 @@ export default function Copilot() {
 
       {mode === 'auto' && (!docText.trim() || !providerCode.trim()) && (
         <Card style={{ marginBottom: 16 }}>
-          <Typography.Text type="secondary">请先输入资金方编码和接口文档，然后点击"开始闭环"启动自动流程。</Typography.Text>
+          <Typography.Text type="secondary">请先输入资金方编码和接口文档。</Typography.Text>
         </Card>
       )}
     </div>
