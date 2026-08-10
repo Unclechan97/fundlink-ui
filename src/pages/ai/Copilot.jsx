@@ -30,12 +30,14 @@ export default function Copilot() {
   const [applying, setApplying] = useState(false);
 
   // ── Phase 4: 意图识别 + 多接口拆分 ──
-  const [intent, setIntent] = useState(null);        // {intent, confidence, reason}
-  const [splitInterfaces, setSplitInterfaces] = useState([]); // InterfaceSegment[]
-  const [selectedIds, setSelectedIds] = useState([]); // 用户勾选的 interfaceId
+  const [intent, setIntent] = useState(null);
+  const [splitInterfaces, setSplitInterfaces] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [showIntent, setShowIntent] = useState(false);
-  const [qaAnswer, setQaAnswer] = useState(null);     // 知识问答结果
-  const [troubleshootResult, setTroubleshootResult] = useState(null); // 排查结果
+  const [qaAnswer, setQaAnswer] = useState(null);
+  const [troubleshootResult, setTroubleshootResult] = useState(null);
+  const [multiResults, setMultiResults] = useState(null); // {totalCount, successCount, failedCount, interfaces: [{...result}]}
+  const [activeInterfaceId, setActiveInterfaceId] = useState(null); // 当前查看的接口
 
   // ── 字段映射状态 ──
   const [mappings, setMappings] = useState([]);
@@ -132,19 +134,22 @@ export default function Copilot() {
         const data = analyzeRes.data;
 
         if (data.interfaces) {
-          // 多接口结果
-          message.success({ content: `${data.successCount}/${data.totalCount} 成功`, key: 'multi' });
-          // 取第一个成功的结果展示
+          // 多接口结果 — 全部保存
+          setMultiResults(data);
           const firstSuccess = data.interfaces.find(i => i.status === 'SUCCESS');
-          if (firstSuccess?.result) {
-            setResult(firstSuccess.result);
-            initFromResult(firstSuccess.result);
+          if (firstSuccess) {
+            setActiveInterfaceId(firstSuccess.interfaceId);
+            if (firstSuccess.result) {
+              setResult(firstSuccess.result);
+              initFromResult(firstSuccess.result);
+            }
           }
-          // 更新 split 列表带上状态
+          // 更新列表显示状态
           setSplitInterfaces(prev => prev.map(s => {
             const ri = data.interfaces.find(i => i.interfaceId === s.interfaceId);
-            return ri ? { ...s, status: ri.status, errorMessage: ri.errorMessage } : s;
+            return ri ? { ...s, status: ri.status, errorMessage: ri.errorMessage, result: ri.result } : s;
           }));
+          message.success(`${data.successCount}/${data.totalCount} 成功`);
         } else {
           // 单接口结果（向后兼容）
           setResult(data);
@@ -221,6 +226,16 @@ export default function Copilot() {
       message.error('AI 服务暂不可用: ' + (e.message || ''));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── 切换查看不同接口的结果 ──
+  const handleSwitchInterface = (interfaceId) => {
+    setActiveInterfaceId(interfaceId);
+    const iface = splitInterfaces.find(s => s.interfaceId === interfaceId);
+    if (iface?.result) {
+      setResult(iface.result);
+      initFromResult(iface.result);
     }
   };
 
@@ -449,7 +464,20 @@ export default function Copilot() {
 
       {/* ── Phase 4: 接口列表（多接口拆分结果） ── */}
       {splitInterfaces.length > 0 && intent?.type === 'INTERFACE_DEV' && (
-        <Card size="small" title={<span>📋 检测到 {splitInterfaces.length} 个接口定义</span>}
+        <Card size="small" title={
+          <Space>
+            <span>📋 检测到 {splitInterfaces.length} 个接口</span>
+            {multiResults && (
+              <Tag color="green">{multiResults.successCount} 成功</Tag>
+            )}
+            {multiResults && multiResults.failedCount > 0 && (
+              <Tag color="red">{multiResults.failedCount} 失败</Tag>
+            )}
+            {activeInterfaceId && (
+              <Tag color="blue">正在查看: {splitInterfaces.find(s => s.interfaceId === activeInterfaceId)?.interfaceName}</Tag>
+            )}
+          </Space>
+        }
           style={{ marginBottom: 16 }}
           extra={
             <Space>
@@ -459,25 +487,31 @@ export default function Copilot() {
           }>
           {splitInterfaces.map((iface, idx) => {
             const isSelected = selectedIds.includes(iface.interfaceId);
+            const isActive = activeInterfaceId === iface.interfaceId;
+            const hasResult = iface.status === 'SUCCESS' && iface.result;
             const statusColor = iface.status === 'SUCCESS' ? 'green' : iface.status === 'FAILED' ? 'red' : 'default';
             return (
             <div key={iface.interfaceId} style={{
               padding: '8px 12px', margin: '4px 0', borderRadius: 6,
-              background: isSelected ? '#e6f7ff' : '#fafafa',
-              border: `1px solid ${isSelected ? '#91d5ff' : '#f0f0f0'}`,
+              background: isActive ? '#e6f7ff' : isSelected ? '#f6ffed' : '#fafafa',
+              border: `1px solid ${isActive ? '#1890ff' : isSelected ? '#b7eb8f' : '#f0f0f0'}`,
               cursor: 'pointer',
             }} onClick={() => {
+              // 预处理：勾选/取消
               setSelectedIds(prev => prev.includes(iface.interfaceId)
                 ? prev.filter(id => id !== iface.interfaceId)
                 : [...prev, iface.interfaceId]);
+              // 有结果时切过去看
+              if (hasResult) handleSwitchInterface(iface.interfaceId);
             }}>
               <Space>
                 <input type="checkbox" checked={isSelected} readOnly />
                 <Tag>{idx + 1}</Tag>
-                <Text strong>{iface.interfaceName}</Text>
+                <Text strong={isActive}>{iface.interfaceName}</Text>
                 {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
                 {iface.status && <Tag color={statusColor}>{iface.status}</Tag>}
                 {iface.errorMessage && <Text type="danger" style={{ fontSize: 12 }}>{iface.errorMessage}</Text>}
+                {hasResult && isActive && <Tag color="blue">当前查看</Tag>}
               </Space>
             </div>
             );
