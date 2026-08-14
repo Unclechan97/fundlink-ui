@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Form, Input, Select, Button, Table, Modal, Typography, Space, message, Card, Row, Col } from 'antd';
 import { PlusOutlined, PlayCircleOutlined, DeleteOutlined, SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { createTemplate, updateTemplate, getTemplates,
+import { createTemplate, updateTemplate, getTemplate,
   getFieldMappings, createFieldMapping, deleteFieldMapping, previewTemplate } from '../api';
 
 export default function TemplateEdit() {
@@ -20,9 +20,8 @@ export default function TemplateEdit() {
 
   useEffect(() => {
     if (!isNew) {
-      getTemplates(1, 50).then((res) => {
-        const t = (res?.data?.records ?? []).find((r) => r.id === +id);
-        if (t) form.setFieldsValue(t);
+      getTemplate(id).then((res) => {
+        if (res?.data) form.setFieldsValue(res.data);
       }).catch((err) => message.error('加载失败: ' + (err.message || '网络错误')));
       getFieldMappings(id).then((res) => setMappings(res?.data ?? []))
         .catch((err) => message.error('加载失败: ' + (err.message || '网络错误')));

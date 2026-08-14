@@ -3,9 +3,10 @@ import { Card, Steps, Collapse, Button, Space, Tag, Typography, Alert, message, 
 import {
   LoadingOutlined, CheckCircleFilled, CloseCircleFilled,
   PlayCircleOutlined, StopOutlined, RedoOutlined,
-  ForwardOutlined, EditOutlined, ReloadOutlined,
+  ForwardOutlined, EditOutlined,
 } from '@ant-design/icons';
-import { createLoop, getLoopTask, sendDecision, getLoopResult, cancelLoop } from '../../api';
+import { createLoop, sendDecision, getLoopResult, cancelLoop } from '../../api';
+import usePollingTask from '../../hooks/usePollingTask';
 
 const { Text } = Typography;
 
@@ -54,7 +55,6 @@ const initialState = {
   decision: null,
   decisionSent: false,
   result: null,
-  sseError: null,
 };
 
 // ── Phase → 步骤索引映射 ──
@@ -62,7 +62,7 @@ const PHASE_TO_STEP = { ANALYZE: 0, VALIDATE: 1, DRYRUN: 2 };
 
 // ── Reducer ──
 function reducer(state, action) {
-  // 终态时忽略非终态事件 — 防止 cancel 后 SSE 事件覆盖 failed 状态
+  // 终态时忽略非终态事件 — 防止轮询迟到事件覆盖终态
   const isTerminal = state.status === 'failed' || state.status === 'completed';
   if (isTerminal && action.type !== 'TASK_FAILED' && action.type !== 'TASK_COMPLETE') {
     return state;
@@ -83,7 +83,6 @@ function reducer(state, action) {
           VALIDATE: { status: 'pending', messages: [] },
           DRYRUN: { status: 'pending', messages: [] },
         },
-        sseError: null,
       };
 
     case 'PHASE_START': {
@@ -188,9 +187,6 @@ function reducer(state, action) {
         ),
       };
 
-    case 'SSE_ERROR':
-      return { ...state, sseError: 'SSE 连接中断，任务在后台继续运行' };
-
     default:
       return state;
   }
@@ -214,112 +210,73 @@ function PhaseIcon({ status }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// AutoLoopPanel 组件
+// AutoLoopPanel 组件（任务 D — 轮询改造）
+//
+// SSE 已移除：进度来自 usePollingTask 轮询 GET /api/ai/loop/{taskId}。
+// 消息级日志取舍 = 选项 A：接受粗粒度 status —
+// Steps 进度条照常，折叠面板只显示阶段完成状态，不再有逐条 progress 消息。
+// 决策面板的 decisionType/summary/options 一律来自后端决策上下文接口
+// （任务 B 的 B5.2），前端不再猜测 options。
 // ═══════════════════════════════════════════════════════════
 export default function AutoLoopPanel({ documentText, providerCode, flowType = 'LOAN' }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const esRef = useRef(null);
 
   // ── 编辑弹窗状态 ──
   const [editOpen, setEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
   const [editMappings, setEditMappings] = useState([]);
 
-  // ── SSE 连接 ──
-  const connectSSE = useCallback((taskId) => {
-    if (esRef.current) {
-      esRef.current.close();
+  // ── 轮询 status → action 映射（粗粒度） ──
+  const handleStatusChange = useCallback((newStatus, oldStatus, task) => {
+    // 上一阶段视作完成（ANALYZE→VALIDATE、VALIDATE→DRYRUN、DRYRUN→DECISION_POINT）
+    if (PHASES.includes(oldStatus)) {
+      dispatch({ type: 'PHASE_COMPLETE', phase: oldStatus, summary: '阶段完成' });
     }
-
-    const url = `/api/ai/loop/${taskId}/stream`;
-    const es = new EventSource(url);
-    esRef.current = es;
-
-    es.addEventListener('phase:start', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'PHASE_START', phase: d.phase, round: d.round, maxRounds: d.maxRounds });
-    });
-
-    es.addEventListener('phase:progress', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'PHASE_PROGRESS', phase: d.phase, message: d.message });
-    });
-
-    es.addEventListener('phase:complete', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'PHASE_COMPLETE', phase: d.phase, summary: d.summary });
-    });
-
-    es.addEventListener('phase:error', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'PHASE_ERROR', phase: d.phase, message: d.message });
-    });
-
-    es.addEventListener('decision_required', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'DECISION_REQUIRED', decisionType: d.type, summary: d.summary, options: d.options });
-    });
-
-    es.addEventListener('task:complete', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'TASK_COMPLETE', summary: d.summary });
-      es.close();
-    });
-
-    es.addEventListener('task:failed', (e) => {
-      const d = JSON.parse(e.data);
-      dispatch({ type: 'TASK_FAILED', error: d.error, rounds: d.rounds });
-      es.close();
-    });
-
-    // ── Phase 3: 多接口事件 ──
-    es.addEventListener('split:start', () => {
-      // 开始拆分 — 可显示"正在拆分文档..."
-    });
-
-    es.addEventListener('split:complete', (e) => {
-      // 拆分完成 — { totalCount, interfaces: [{id, name, endpoint}] }
-    });
-
-    es.addEventListener('interface:start', (e) => {
-      // 单个接口开始 — { interfaceId, name, index, total }
-    });
-
-    es.addEventListener('interface:phase:start', (e) => {
-      // { interfaceId, phase, round, maxRounds }
-    });
-
-    es.addEventListener('interface:phase:progress', (e) => {
-      // { interfaceId, phase, message }
-    });
-
-    es.addEventListener('interface:phase:complete', (e) => {
-      // { interfaceId, phase, summary }
-    });
-
-    es.addEventListener('interface:phase:error', (e) => {
-      // { interfaceId, phase, message }
-    });
-
-    es.addEventListener('interface:complete', (e) => {
-      // { interfaceId, name, status, summary }
-    });
-
-    es.addEventListener('all:complete', (e) => {
-      // { totalCount, successCount, failedCount }
-    });
-
-    es.addEventListener('ping', () => {
-      // 心跳帧 — 无需处理，仅保持连接活跃
-    });
-
-    es.onerror = () => {
-      // 只在非终态时报告连接错误
-      dispatch({ type: 'SSE_ERROR' });
-    };
-
-    return es;
+    if (PHASES.includes(newStatus)) {
+      dispatch({
+        type: 'PHASE_START',
+        phase: newStatus,
+        round: task.currentRound ?? 0,
+        maxRounds: task.maxRounds ?? 3,
+      });
+      return;
+    }
+    switch (newStatus) {
+      case 'DECISION_POINT':
+        dispatch({
+          type: 'DECISION_REQUIRED',
+          decisionType: task.decisionType || 'RECOVERY_EXHAUSTED',
+          summary: task.decisionSummary || '任务需要你的决策，请选择操作继续。',
+          options: task.decisionOptions || [],
+        });
+        break;
+      case 'PUBLISHED':
+        dispatch({
+          type: 'TASK_COMPLETE',
+          summary: `流程已发布 (共 ${(task.currentRound ?? 0) + 1}/${task.maxRounds ?? 3} 轮)`,
+        });
+        break;
+      case 'FAILED':
+      case 'ABORTED':
+        dispatch({
+          type: 'TASK_FAILED',
+          error: task.status === 'ABORTED' ? '任务已终止' : '任务失败',
+          rounds: task.currentRound ?? 0,
+        });
+        break;
+      default:
+        // PENDING / DIAGNOSE / 未知 — 粗粒度轮询下无 UI 变化（决策摘要会带诊断信息）
+        break;
+    }
   }, []);
+
+  // ── 轮询（taskId 由 INIT 设置后自动开始；终态自动停止；卸载自动清理） ──
+  usePollingTask(state.taskId, {
+    onStatusChange: handleStatusChange,
+    onError: () => {
+      // 轮询自愈，静默重试 — 不弹"连接中断"
+    },
+  });
 
   // ── 启动闭环 ──
 
@@ -340,14 +297,15 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
     try {
       const res = await createLoop(documentText, providerCode, flowType);
       const { taskId, taskNo } = res.data;
+      // 后端改造后 create 即启动（任务 B 的 B5.1）— 不再连 SSE，
+      // INIT 设置 taskId 后 usePollingTask 自动开始轮询
       dispatch({ type: 'INIT', taskId, taskNo });
-      connectSSE(taskId);
     } catch (err) {
       const errMsg = err?.response?.data?.msg || err?.message || '未知错误';
       message.error('创建任务失败: ' + errMsg);
       dispatch({ type: 'TASK_FAILED', error: errMsg, rounds: 0 });
     }
-  }, [documentText, providerCode, flowType, connectSSE]);
+  }, [documentText, providerCode, flowType]);
 
   // ── 持久化：状态变化时保存快照 ──
   useEffect(() => {
@@ -368,6 +326,8 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
   }, [state.taskId, state.taskNo, state.round, state.maxRounds, state.status, documentText]);
 
   // ── 挂载时检查是否有未完成的任务，自动恢复 ──
+  // 轮询改造后大幅简化：恢复 = INIT 快照 taskId，剩下的交给轮询 —
+  // 终态、DECISION_POINT（options 来自后端接口）、阶段进度全部由 handleStatusChange 映射。
   const hasCheckedSnapshot = useRef(false);
   useEffect(() => {
     if (hasCheckedSnapshot.current) return;
@@ -375,74 +335,20 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
 
     const snap = loadSnapshot();
     if (!snap || !snap.taskId) return;
-    // 只恢复非终态的任务（正常情况不会存在，防御性检查）
+    // 只恢复非终态的任务（防御性检查）
     if (snap.status === 'completed' || snap.status === 'failed') {
       clearSnapshot();
       return;
     }
-
     // 检查文档是否一致（不同文档不应该恢复旧任务）
     if (snap.documentText !== documentText) {
       clearSnapshot();
       return;
     }
 
-    // 异步恢复
-    (async () => {
-      dispatch({ type: 'CREATING' });
-      try {
-        const res = await getLoopTask(snap.taskId);
-        const t = res.data;
-        if (t.status === 'PUBLISHED') {
-          clearSnapshot();
-          dispatch({ type: 'TASK_COMPLETE', summary: `流程已发布 (Round ${t.currentRound || 0 + 1}/${t.maxRounds})` });
-          return;
-        }
-        if (t.status === 'FAILED' || t.status === 'ABORTED') {
-          clearSnapshot();
-          dispatch({ type: 'TASK_FAILED', error: '任务已' + (t.status === 'ABORTED' ? '终止' : '失败'), rounds: t.currentRound || 0 });
-          return;
-        }
-        // 恢复基本状态
-        dispatch({ type: 'INIT', taskId: snap.taskId, taskNo: snap.taskNo });
-        const restoredRound = t.currentRound ?? snap.round;
-        const restoredMax = t.maxRounds ?? snap.maxRounds;
-        dispatch({
-          type: 'PHASE_START',
-          phase: t.status || 'ANALYZE',
-          round: restoredRound,
-          maxRounds: restoredMax,
-        });
-        // 重连 SSE
-        connectSSE(snap.taskId);
-
-        // 如果后端在等待决策，重新显示决策面板（原 decision_required 事件已发给旧连接）
-        // 无法区分 PUBLISH_CONFIRM 还是 RECOVERY，所以提供完整选项
-        if (t.status === 'DECISION_POINT') {
-          const allOptions = t.currentRound >= t.maxRounds
-            ? ['SKIP', 'EDIT_AND_RETRY', 'ABORT']
-            : ['PUBLISH', 'RETRY', 'SKIP', 'EDIT_AND_RETRY', 'ABORT'];
-          dispatch({
-            type: 'DECISION_REQUIRED',
-            decisionType: 'RESTORE',
-            summary: '检测到之前的任务正在等待决策，请选择操作继续。',
-            options: allOptions,
-          });
-        }
-        message.success('已恢复之前的任务');
-      } catch (err) {
-        clearSnapshot();
-        dispatch({ type: 'TASK_FAILED', error: '恢复任务失败: ' + (err.message || ''), rounds: 0 });
-      }
-    })();
+    dispatch({ type: 'INIT', taskId: snap.taskId, taskNo: snap.taskNo });
+    message.info('正在恢复之前的任务...');
   }, []); // 只在挂载时执行一次
-  useEffect(() => {
-    return () => {
-      if (esRef.current) {
-        esRef.current.close();
-      }
-    };
-  }, []);
 
   // ── 发送决策 ──
   const handleDecision = async (decision) => {
@@ -493,20 +399,6 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
     }
   };
 
-  // ── 重新连接 ──
-  const handleReconnect = async () => {
-    if (!state.taskId) return;
-    try {
-      const res = await getLoopTask(state.taskId);
-      const t = res.data;
-      message.info(`任务状态: ${t.status}, 当前轮次: ${t.currentRound}/${t.maxRounds}`);
-      dispatch({ type: 'SSE_ERROR', error: null });  // clear error
-      connectSSE(state.taskId);
-    } catch (err) {
-      message.error('重连失败: ' + (err.message || ''));
-    }
-  };
-
   // ── 计算 Steps 当前状态 ──
   const stepStatus = (idx) => {
     if (state.status === 'failed') {
@@ -522,7 +414,7 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
     return 'wait';
   };
 
-  // ── 折叠面板内容 ──
+  // ── 折叠面板内容（粗粒度：阶段完成状态，无逐条 progress 消息） ──
   const collapseItems = PHASES.map((phase) => {
     const p = state.phases[phase];
     const labels = { ANALYZE: '解析文档', VALIDATE: '验证模板', DRYRUN: '干跑测试' };
@@ -632,22 +524,7 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
         />
       )}
 
-      {/* ── SSE 连接错误 ── */}
-      {state.sseError && !isTerminal && (
-        <Alert
-          type="warning"
-          message={state.sseError}
-          action={
-            <Button size="small" icon={<ReloadOutlined />} onClick={handleReconnect}>
-              重新连接
-            </Button>
-          }
-          style={{ marginBottom: 16 }}
-          showIcon
-        />
-      )}
-
-      {/* ── 决策面板 ── */}
+      {/* ── 决策面板（options 来自后端决策上下文接口） ── */}
       {isWaiting && state.decision && (
         <Card
           size="small"
@@ -658,19 +535,25 @@ export default function AutoLoopPanel({ documentText, providerCode, flowType = '
               <span>需要你的决策</span>
               {state.decision.type === 'PUBLISH_CONFIRM'
                 ? <Tag color="green">验证通过</Tag>
-                : state.decision.type === 'RESTORE'
-                ? <Tag color="blue">任务恢复</Tag>
                 : <Tag color="orange">问题恢复</Tag>
               }
             </Space>
           }
         >
           <Alert
-            type={state.decision.type === 'PUBLISH_CONFIRM' ? 'success' : state.decision.type === 'RESTORE' ? 'info' : 'warning'}
+            type={state.decision.type === 'PUBLISH_CONFIRM' ? 'success' : 'warning'}
             message={state.decision.summary}
             style={{ marginBottom: 12 }}
             showIcon
           />
+          {(state.decision.options || []).length === 0 && (
+            <Alert
+              type="warning"
+              message="决策上下文缺失，请中断任务后重试"
+              style={{ marginBottom: 12 }}
+              showIcon
+            />
+          )}
           <Space wrap>
             {(state.decision.options || []).map((opt) => {
               const cfg = DECISION_BTN_CFG[opt] || {};

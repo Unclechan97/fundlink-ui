@@ -4,7 +4,7 @@ import { Button, Input, Select, Typography, message, Card, Row, Col, Form, Spin 
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import ReactFlow, { ReactFlowProvider, useReactFlow, Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { createFlow, updateFlow, getFlows } from '../api';
+import { createFlow, updateFlow, getFlow } from '../api';
 
 // ── 普通对象，不调用 hooks ──
 const PALETTE = {
@@ -57,8 +57,8 @@ function FlowEditor() {
   // 加载已有数据
   useEffect(() => {
     if (!isNew) {
-      getFlows(1, 50).then((res) => {
-        const f = (res?.data?.records ?? []).find((r) => r.id === +id);
+      getFlow(id).then((res) => {
+        const f = res?.data;
         if (f) {
           form.setFieldsValue(f);
           try {

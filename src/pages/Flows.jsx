@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Table, Button, Space, Typography, Tag, Popconfirm, message } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -7,25 +7,28 @@ import { getFlows, deleteFlow, publishFlow } from '../api';
 export default function Flows() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const nav = useNavigate();
 
-  const fetch = async () => {
+  const fetch = useCallback(async (page = 1, size = 10) => {
     setLoading(true);
     try {
-      const res = await getFlows(1, 50);
+      const res = await getFlows(page, size);
       setData(res?.data?.records ?? []);
+      setPagination(prev => ({ ...prev, current: page, pageSize: size, total: res?.data?.total ?? 0 }));
     } catch (err) {
       message.error('加载失败: ' + (err.message || '网络错误'));
     }
     setLoading(false);
-  };
-  useEffect(() => { fetch(); }, []);
+  }, []);
+
+  useEffect(() => { fetch(); }, [fetch]);
 
   const onDelete = async (id) => {
     try {
       await deleteFlow(id);
       message.success('Deleted');
-      fetch();
+      fetch(pagination.current, pagination.pageSize);
     } catch (err) {
       message.error('加载失败: ' + (err.message || '网络错误'));
     }
@@ -34,10 +37,14 @@ export default function Flows() {
     try {
       await publishFlow(id);
       message.success('Published');
-      fetch();
+      fetch(pagination.current, pagination.pageSize);
     } catch (err) {
       message.error('加载失败: ' + (err.message || '网络错误'));
     }
+  };
+
+  const onTableChange = (pag) => {
+    fetch(pag.current, pag.pageSize);
   };
 
   const columns = [
@@ -78,7 +85,15 @@ export default function Flows() {
         </Button>
       </div>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading}
-        pagination={false} style={{ background: '#fff', borderRadius: 12 }} />
+        onChange={onTableChange}
+        pagination={{
+          current: pagination.current,
+          pageSize: pagination.pageSize,
+          total: pagination.total,
+          showSizeChanger: true,
+          showTotal: (total) => `共 ${total} 条`,
+        }}
+        style={{ background: '#fff', borderRadius: 12 }} />
     </>
   );
 }

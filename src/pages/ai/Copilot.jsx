@@ -1,10 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Card, Input, Button, Space, Table, Tag, Typography, message, Spin, Descriptions, Collapse, Tooltip, Segmented, Select } from 'antd';
-import { RobotOutlined, SendOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons';
+import { RobotOutlined, SendOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined, LikeOutlined, DislikeOutlined } from '@ant-design/icons';
 import ReactFlow, { Controls, Background, Handle, Position, useNodesState, useEdgesState, addEdge } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { analyzeDocument, applyConfig, detectIntent, splitDocument, askQuestion, troubleshoot } from '../../api';
-import AutoLoopPanel from './AutoLoopPanel';
+import { analyzeDocument, applyConfig, detectIntent, splitDocument, askQuestion, troubleshoot, createMultiLoop, submitFeedback } from '../../api';
+import MultiTaskProgress from './MultiTaskProgress';
 import useSessionState from '../../hooks/useSessionState';
 
 const { TextArea } = Input;
@@ -29,15 +29,20 @@ export default function Copilot() {
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
 
-  // ── Phase 4: 意图识别 + 多接口拆分 ──
+  // ── 自动模式：意图识别 + 多接口拆分 + 闭环 ──
   const [intent, setIntent] = useState(null);
   const [splitInterfaces, setSplitInterfaces] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [showIntent, setShowIntent] = useState(false);
   const [qaAnswer, setQaAnswer] = useState(null);
   const [troubleshootResult, setTroubleshootResult] = useState(null);
-  const [multiResults, setMultiResults] = useState(null); // {totalCount, successCount, failedCount, interfaces: [{...result}]}
-  const [activeInterfaceId, setActiveInterfaceId] = useState(null); // 当前查看的接口
+  const [troubleshootTaskId, setTroubleshootTaskId] = useState(null);
+  const [feedbackRating, setFeedbackRating] = useState(null); // 'HELPFUL' | 'NOT_HELPFUL' | null
+  const [feedbackCategory, setFeedbackCategory] = useState(null);
+  const [feedbackCorrection, setFeedbackCorrection] = useState('');
+  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [autoStep, setAutoStep] = useState('input'); // 'input' | 'confirm' | 'running'
+  const [multiTask, setMultiTask] = useState(null); // { parentTaskId, subTasks: [...] }
 
   // ── 字段映射状态 ──
   const [mappings, setMappings] = useState([]);
@@ -101,7 +106,6 @@ export default function Copilot() {
   // ── Phase 4: 通用发送 — 识别意图 → 拆分 → 自动并行处理 ──
   const handleSend = async () => {
     if (!docText.trim()) { message.warning('请输入内容'); return; }
-    if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
     setLoading(true);
     setResult(null);
     setQaAnswer(null);
@@ -119,7 +123,8 @@ export default function Copilot() {
 
       // Step 2: 按意图路由
       if (intentType === 'INTERFACE_DEV') {
-        // Step 2a: 拆分
+        if (!providerCode.trim()) { message.warning('接口开发需要输入资金方编码'); setLoading(false); return; }
+        // Step 2a: 拆分 → 显示接口列表让用户确认
         const splitRes = await splitDocument(docText, providerCode.trim());
         const interfaces = splitRes.data.interfaces || [];
         setSplitInterfaces(interfaces);
@@ -131,36 +136,22 @@ export default function Copilot() {
         const allIds = interfaces.map(s => s.interfaceId);
         setSelectedIds(allIds);
 
-        // Step 2b: 自动并行处理全部接口（单次请求）
         if (interfaces.length >= 2) {
-          message.loading({ content: `正在并行处理 ${interfaces.length} 个接口...`, key: 'multi', duration: 0 });
-        }
-        const analyzeRes = await analyzeDocument(docText, providerCode.trim(), flowType, allIds);
-        const data = analyzeRes.data;
-
-        if (data.interfaces) {
-          // 多接口结果 — 全部保存
-          setMultiResults(data);
-          const firstSuccess = data.interfaces.find(i => i.status === 'SUCCESS');
-          if (firstSuccess) {
-            setActiveInterfaceId(firstSuccess.interfaceId);
-            if (firstSuccess.result) {
-              setResult(firstSuccess.result);
-              initFromResult(firstSuccess.result);
-            }
-          }
-          // 更新列表显示状态
-          setSplitInterfaces(prev => prev.map(s => {
-            const ri = data.interfaces.find(i => i.interfaceId === s.interfaceId);
-            return ri ? { ...s, status: ri.status, errorMessage: ri.errorMessage, result: ri.result } : s;
-          }));
-          message.success(`${data.successCount}/${data.totalCount} 成功`);
+          // 多接口：进入确认步骤
+          setAutoStep('confirm');
+          message.success(`已识别 ${interfaces.length} 个接口，请确认后执行`);
         } else {
-          // 单接口结果（向后兼容）
-          setResult(data);
-          initFromResult(data);
-          if (data.flowType && data.flowType !== flowType) setFlowType(data.flowType);
-          message.success('AI 解析完成');
+          // 单接口：直接启动闭环
+          setAutoStep('running');
+          message.loading({ content: '正在创建闭环任务...', key: 'multi', duration: 0 });
+          try {
+            const multiRes = await createMultiLoop(docText, providerCode.trim(), flowType, allIds, 3);
+            setMultiTask({ parentTaskId: multiRes.data.parentTaskId, subTasks: multiRes.data.subTasks });
+            message.success({ content: `闭环任务已创建: ${multiRes.data.parentTaskNo}`, key: 'multi' });
+          } catch (e2) {
+            message.error({ content: '创建闭环失败: ' + (e2.message || ''), key: 'multi' });
+            setAutoStep('confirm');
+          }
         }
       } else if (intentType === 'KNOWLEDGE_QA') {
         const qaRes = await askQuestion(docText);
@@ -169,6 +160,11 @@ export default function Copilot() {
       } else if (intentType === 'TROUBLESHOOTING') {
         const tsRes = await troubleshoot(docText);
         setTroubleshootResult(tsRes.data.analysis);
+        setTroubleshootTaskId(tsRes.data.taskId || null);
+        setFeedbackRating(null);
+        setFeedbackCategory(null);
+        setFeedbackCorrection('');
+        setFeedbackSent(false);
         message.success('诊断完成');
       }
     } catch (e) {
@@ -178,42 +174,7 @@ export default function Copilot() {
     }
   };
 
-  // ── 手动模式：解析选中的接口（多接口并行） ──
-  const handleManualAnalyze = async () => {
-    if (selectedIds.length === 0) { message.warning('请至少选择一个接口'); return; }
-    setLoading(true);
-    setResult(null);
-    try {
-      const res = await analyzeDocument(docText, providerCode.trim(), flowType, selectedIds);
-      const data = res.data;
-      // 多接口返回聚合结构，单接口返回扁平 RequirementResult
-      if (data.interfaces) {
-        // 多接口结果 — 取第一个成功的展示（后续可扩展多卡片）
-        const firstSuccess = data.interfaces.find(i => i.status === 'SUCCESS');
-        if (firstSuccess?.result) {
-          setResult(firstSuccess.result);
-          initFromResult(firstSuccess.result);
-          message.success(`${data.successCount}/${data.totalCount} 个接口解析成功`);
-        } else {
-          message.warning('所有接口解析失败');
-        }
-      } else {
-        // 单接口结果（向后兼容）
-        setResult(data);
-        initFromResult(data);
-        if (data.flowType && data.flowType !== flowType) {
-          setFlowType(data.flowType);
-        }
-        message.success('AI 解析完成');
-      }
-    } catch (e) {
-      message.error('AI 服务暂不可用: ' + (e.message || ''));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── 保留旧版直接分析（兼容） ──
+  // ── 保留旧版直接分析（手动模式用） ──
   const handleAnalyze = async () => {
     if (!docText.trim()) { message.warning('请输入接口文档内容'); return; }
     if (!providerCode.trim()) { message.warning('请输入资金方编码'); return; }
@@ -234,13 +195,19 @@ export default function Copilot() {
     }
   };
 
-  // ── 切换查看不同接口的结果 ──
-  const handleSwitchInterface = (interfaceId) => {
-    setActiveInterfaceId(interfaceId);
-    const iface = splitInterfaces.find(s => s.interfaceId === interfaceId);
-    if (iface?.result) {
-      setResult(iface.result);
-      initFromResult(iface.result);
+  // ── 自动模式：确认接口选择并启动多接口闭环 ──
+  const handleConfirmMulti = async () => {
+    if (selectedIds.length === 0) { message.warning('请至少选择一个接口'); return; }
+    setLoading(true);
+    try {
+      const res = await createMultiLoop(docText, providerCode.trim(), flowType, selectedIds, 3);
+      setMultiTask({ parentTaskId: res.data.parentTaskId, subTasks: res.data.subTasks });
+      setAutoStep('running');
+      message.success(`闭环任务已创建: ${res.data.parentTaskNo}，共 ${res.data.subTasks.length} 个子任务`);
+    } catch (e) {
+      message.error('创建闭环失败: ' + (e.message || ''));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -264,6 +231,11 @@ export default function Copilot() {
       } else if (newIntent === 'TROUBLESHOOTING') {
         const tsRes = await troubleshoot(docText);
         setTroubleshootResult(tsRes.data.analysis);
+        setTroubleshootTaskId(tsRes.data.taskId || null);
+        setFeedbackRating(null);
+        setFeedbackCategory(null);
+        setFeedbackCorrection('');
+        setFeedbackSent(false);
         setIntent({ type: 'TROUBLESHOOTING', display: '问题排查', confidence: 1, reason: '用户切换' });
       }
     } catch (e) {
@@ -415,15 +387,17 @@ export default function Copilot() {
           <TextArea placeholder="粘贴接口文档 / 输入业务问题 / 贴入报错日志..." rows={6}
             value={docText} onChange={e => setDocText(e.target.value)} />
           <Space>
-            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading}>
+            <Button type="primary" icon={<SendOutlined />}
+              onClick={mode === 'manual' ? handleAnalyze : handleSend}
+              loading={loading}>
               {loading ? '处理中...' : 'AI 解析'}
             </Button>
           </Space>
         </Space>
       </Card>
 
-      {/* ── Phase 4: 意图识别结果 ── */}
-      {showIntent && intent && (
+      {/* ── 自动模式: 意图识别结果 ── */}
+      {mode === 'auto' && showIntent && intent && (
         <Card size="small" style={{ marginBottom: 16, background: '#f6ffed', border: '1px solid #b7eb8f' }}>
           <Space direction="vertical" style={{ width: '100%' }}>
             <div>
@@ -443,8 +417,8 @@ export default function Copilot() {
         </Card>
       )}
 
-      {/* ── Phase 4: 知识问答结果 ── */}
-      {qaAnswer && (
+      {/* ── 自动模式: 知识问答结果 ── */}
+      {mode === 'auto' && qaAnswer && (
         <Card size="small" title="💬 AI 回答" style={{ marginBottom: 16 }}>
           <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{qaAnswer}</Paragraph>
           <Space style={{ marginTop: 8 }}>
@@ -455,10 +429,83 @@ export default function Copilot() {
         </Card>
       )}
 
-      {/* ── Phase 4: 问题排查结果 ── */}
-      {troubleshootResult && (
+      {/* ── 自动模式: 问题排查结果 ── */}
+      {mode === 'auto' && troubleshootResult && (
         <Card size="small" title="🔧 诊断分析" style={{ marginBottom: 16 }}>
           <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{troubleshootResult}</Paragraph>
+
+          {/* 反馈区域 */}
+          <div style={{ marginTop: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+            {!feedbackSent ? (
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                <div>
+                  <Text style={{ marginRight: 8 }}>诊断结果是否有帮助？</Text>
+                  <Button
+                    size="small"
+                    type={feedbackRating === 'HELPFUL' ? 'primary' : 'default'}
+                    icon={<LikeOutlined />}
+                    onClick={() => setFeedbackRating('HELPFUL')}
+                    style={{ marginRight: 8 }}
+                  >有帮助</Button>
+                  <Button
+                    size="small"
+                    type={feedbackRating === 'NOT_HELPFUL' ? 'primary' : 'default'}
+                    danger={feedbackRating === 'NOT_HELPFUL'}
+                    icon={<DislikeOutlined />}
+                    onClick={() => setFeedbackRating('NOT_HELPFUL')}
+                  >不准确</Button>
+                </div>
+                {feedbackRating === 'NOT_HELPFUL' && (
+                  <>
+                    <Select
+                      size="small"
+                      placeholder="选择错误类型（用于数据飞轮聚合）"
+                      style={{ width: '100%' }}
+                      value={feedbackCategory}
+                      onChange={setFeedbackCategory}
+                      options={[
+                        { label: 'FreeMarker 模板', value: 'FreeMarker' },
+                        { label: '字段映射缺失', value: 'FieldMapping' },
+                        { label: 'SpEL 条件表达式', value: 'SpEL' },
+                        { label: '数据源超时/异常', value: 'DataSource' },
+                        { label: '枚举映射 (enumMap)', value: 'EnumMap' },
+                        { label: '其他', value: 'Other' },
+                      ]}
+                    />
+                    <TextArea
+                      size="small"
+                      rows={2}
+                      placeholder="补充正确的诊断或修正内容..."
+                      value={feedbackCorrection}
+                      onChange={e => setFeedbackCorrection(e.target.value)}
+                    />
+                  </>
+                )}
+                {feedbackRating && (
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={feedbackSent === 'sending'}
+                    onClick={async () => {
+                      if (!troubleshootTaskId) return;
+                      setFeedbackSent('sending');
+                      try {
+                        await submitFeedback(troubleshootTaskId, feedbackRating, feedbackCategory, feedbackCorrection || null);
+                        setFeedbackSent(true);
+                        message.success('感谢反馈！');
+                      } catch (e) {
+                        message.error('反馈提交失败');
+                        setFeedbackSent(false);
+                      }
+                    }}
+                  >提交反馈</Button>
+                )}
+              </Space>
+            ) : (
+              <Text type="success">✅ 感谢你的反馈，这将帮助 AI 持续改进诊断能力。</Text>
+            )}
+          </div>
+
           <Space style={{ marginTop: 8 }}>
             <Text type="secondary">不是问题排查？切换为：</Text>
             <Button size="small" onClick={() => handleSwitchIntent('INTERFACE_DEV')}>接口开发</Button>
@@ -467,22 +514,9 @@ export default function Copilot() {
         </Card>
       )}
 
-      {/* ── Phase 4: 接口列表（多接口拆分结果） ── */}
-      {splitInterfaces.length > 0 && intent?.type === 'INTERFACE_DEV' && (
-        <Card size="small" title={
-          <Space>
-            <span>📋 检测到 {splitInterfaces.length} 个接口</span>
-            {multiResults && (
-              <Tag color="green">{multiResults.successCount} 成功</Tag>
-            )}
-            {multiResults && multiResults.failedCount > 0 && (
-              <Tag color="red">{multiResults.failedCount} 失败</Tag>
-            )}
-            {activeInterfaceId && (
-              <Tag color="blue">正在查看: {splitInterfaces.find(s => s.interfaceId === activeInterfaceId)?.interfaceName}</Tag>
-            )}
-          </Space>
-        }
+      {/* ── 自动模式: 接口列表（拆分确认步骤） ── */}
+      {mode === 'auto' && autoStep === 'confirm' && splitInterfaces.length > 0 && intent?.type === 'INTERFACE_DEV' && (
+        <Card size="small" title={<span>📋 检测到 {splitInterfaces.length} 个接口 — 请勾选确认</span>}
           style={{ marginBottom: 16 }}
           extra={
             <Space>
@@ -492,18 +526,14 @@ export default function Copilot() {
           }>
           {splitInterfaces.map((iface, idx) => {
             const isSelected = selectedIds.includes(iface.interfaceId);
-            const isActive = activeInterfaceId === iface.interfaceId;
-            const hasResult = iface.status === 'SUCCESS' && iface.result;
-            const statusColor = iface.status === 'SUCCESS' ? 'green' : iface.status === 'FAILED' ? 'red' : 'default';
             return (
             <div key={iface.interfaceId} style={{
               padding: '8px 12px', margin: '4px 0', borderRadius: 6,
-              background: isActive ? '#e6f7ff' : '#fafafa',
-              border: `1px solid ${isActive ? '#1890ff' : '#f0f0f0'}`,
+              background: isSelected ? '#e6f7ff' : '#fafafa',
+              border: `1px solid ${isSelected ? '#1890ff' : '#f0f0f0'}`,
             }}>
               <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Space>
-                  {/* 勾选框 — 单独点击区域，不触发切换 */}
                   <input type="checkbox" checked={isSelected} style={{ cursor: 'pointer' }}
                     onChange={(e) => {
                       e.stopPropagation();
@@ -512,30 +542,25 @@ export default function Copilot() {
                         : [...prev, iface.interfaceId]);
                     }} />
                   <Tag>{idx + 1}</Tag>
-                  {/* 接口名 — 点击切换到该接口结果 */}
-                  <Text strong={isActive} style={{ cursor: hasResult ? 'pointer' : 'default' }}
-                    onClick={() => { if (hasResult) handleSwitchInterface(iface.interfaceId); }}>
-                    {iface.interfaceName}
-                  </Text>
+                  <Text strong={isSelected}>{iface.interfaceName}</Text>
                   {iface.endpoint && <Tag color="blue">{iface.endpoint}</Tag>}
-                  {iface.status && <Tag color={statusColor}>{iface.status}</Tag>}
-                  {iface.errorMessage && <Text type="danger" style={{ fontSize: 12 }}>{iface.errorMessage}</Text>}
-                  {hasResult && isActive && <Tag color="blue">当前查看</Tag>}
+                  <Tag>{iface.interfaceId}</Tag>
                 </Space>
-                {/* 单个接口写入按钮 — 后续可用 */}
               </Space>
             </div>
             );
           })}
-          {splitInterfaces.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Space>
-                <Text type="secondary">不是接口文档？切换为：</Text>
-                <Button size="small" onClick={() => handleSwitchIntent('KNOWLEDGE_QA')}>知识问答</Button>
-                <Button size="small" onClick={() => handleSwitchIntent('TROUBLESHOOTING')}>问题排查</Button>
-              </Space>
-            </div>
-          )}
+          <div style={{ marginTop: 12 }}>
+            <Space>
+              <Button type="primary" onClick={handleConfirmMulti} loading={loading}
+                disabled={selectedIds.length === 0}>
+                确认执行 ({selectedIds.length} 个接口)
+              </Button>
+              <Text type="secondary">不是接口文档？切换为：</Text>
+              <Button size="small" onClick={() => handleSwitchIntent('KNOWLEDGE_QA')}>知识问答</Button>
+              <Button size="small" onClick={() => handleSwitchIntent('TROUBLESHOOTING')}>问题排查</Button>
+            </Space>
+          </div>
         </Card>
       )}
 
@@ -635,29 +660,24 @@ export default function Copilot() {
           )}
 
       {/* ── 自动模式 ── */}
-      {mode === 'auto' && (
+      {mode === 'auto' && autoStep === 'input' && (
         <Card style={{ marginBottom: 16 }}>
           <Typography.Text type="secondary">
-            自动闭环模式：先切换到「手动」模式完成接口解析，再切回「自动」启动闭环流程。
+            自动闭环模式：粘贴多接口文档 → AI 解析 → 确认接口列表 → 并行闭环执行。
           </Typography.Text>
         </Card>
       )}
 
-      {mode === 'auto' && docText.trim() && providerCode.trim() && splitInterfaces.length > 0 && (
-        <AutoLoopPanel
-          documentText={docText}
+      {mode === 'auto' && autoStep === 'running' && multiTask && (
+        <MultiTaskProgress
+          parentTaskId={multiTask.parentTaskId}
+          subTasks={multiTask.subTasks}
           providerCode={providerCode.trim()}
-          flowType={flowType}
-          selectedInterfaceIds={selectedIds}
         />
       )}
 
-      {mode === 'auto' && docText.trim() && providerCode.trim() && splitInterfaces.length === 0 && (
-        <AutoLoopPanel
-          documentText={docText}
-          providerCode={providerCode.trim()}
-          flowType={flowType}
-        />
+      {mode === 'auto' && autoStep === 'running' && !multiTask && loading && (
+        <Card style={{ marginBottom: 16 }}><Spin tip="正在创建闭环任务..." /></Card>
       )}
 
       {mode === 'auto' && (!docText.trim() || !providerCode.trim()) && (

@@ -49,6 +49,8 @@ export const debugMock = (data) =>
 // ---- Template ----
 export const getTemplates = (page = 1, size = 10) =>
   api.get('/api/admin/templates', { params: { page, size } });
+export const getTemplate = (id) =>
+  api.get(`/api/admin/templates/${id}`);
 export const createTemplate = (data) =>
   api.post('/api/admin/templates', data);
 export const updateTemplate = (id, data) =>
@@ -79,6 +81,8 @@ export const deleteEnumMapping = (id) =>
 // ---- Flow ----
 export const getFlows = (page = 1, size = 10) =>
   api.get('/api/admin/flows', { params: { page, size } });
+export const getFlow = (id) =>
+  api.get(`/api/admin/flows/${id}`);
 export const createFlow = (data) =>
   api.post('/api/admin/flows', data);
 export const updateFlow = (id, data) =>
@@ -134,14 +138,17 @@ export const applyConfig = (result, providerCode, flowType) =>
   aiApi.post('/api/ai/apply', { result, providerCode, flowType });
 
 // ============================================================
-// Auto Loop API — SSE 驱动闭环
+// Auto Loop API — 轮询驱动闭环（SSE 已移除）
 // ============================================================
 
-/** 创建自动闭环任务，返回 {taskId, taskNo} */
+/** 创建自动闭环任务（后端创建即启动），返回 {taskId, taskNo} */
 export const createLoop = (documentText, providerCode, flowType = '') =>
   aiApi.post('/api/ai/loop', { documentText, providerCode, flowType });
 
-/** 查询闭环任务状态 */
+/**
+ * 查询闭环任务状态 — 轮询唯一进度来源。
+ * status=DECISION_POINT 时附带 decisionType/decisionSummary/decisionOptions。
+ */
 export const getLoopTask = (taskId) =>
   aiApi.get(`/api/ai/loop/${taskId}`);
 
@@ -176,3 +183,11 @@ export const askQuestion = (userInput) =>
 /** 问题排查 */
 export const troubleshoot = (userInput) =>
   aiApi.post('/api/ai/troubleshoot', { userInput });
+
+/** 提交排查反馈 (踩/赞 + 分类 + 修正) */
+export const submitFeedback = (taskId, rating, category, correction) =>
+  aiApi.post('/api/ai/feedback', { taskId, rating, category, correction });
+
+/** 创建多接口闭环任务: 1 父任务 + N 子任务 */
+export const createMultiLoop = (documentText, providerCode, flowType, selectedInterfaceIds, maxRounds = 3) =>
+  aiApi.post('/api/ai/loop/multi', { documentText, providerCode, flowType, selectedInterfaceIds, maxRounds });
